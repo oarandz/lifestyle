@@ -1,0 +1,2691 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Daily — Health Tracker</title>
+<style>
+/* =========================================================================
+   THEME TOKENS
+   ========================================================================= */
+:root{
+  --accent:#0a84ff;
+  --accent-soft:rgba(10,132,255,.16);
+  --hydration:#0a84ff;
+  --caffeine:#ff9f0a;
+  --sugar:#ff5fa2;
+  --alcohol:#ff453a;
+  --good:#30d158;
+  --warn:#ffd60a;
+  --bad:#ff453a;
+  --radius:20px;
+  --radius-sm:14px;
+  --gap:14px;
+  --tap:48px;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --fs-base:16px;
+}
+html[data-theme="dark"]{
+  --bg:#000000;
+  --bg-2:#0c0c0e;
+  --card:#1c1c1e;
+  --card-2:#2c2c2e;
+  --field:#1c1c1e;
+  --text:#ffffff;
+  --text-dim:#8e8e93;
+  --text-faint:#636366;
+  --border:rgba(255,255,255,.08);
+  --border-strong:rgba(255,255,255,.16);
+  --shadow:0 8px 30px rgba(0,0,0,.5);
+}
+html[data-theme="light"]{
+  --bg:#f2f2f7;
+  --bg-2:#e8e8ed;
+  --card:#ffffff;
+  --card-2:#f2f2f7;
+  --field:#ffffff;
+  --text:#1c1c1e;
+  --text-dim:#6c6c70;
+  --text-faint:#9a9a9e;
+  --border:rgba(0,0,0,.08);
+  --border-strong:rgba(0,0,0,.14);
+  --shadow:0 8px 30px rgba(0,0,0,.12);
+}
+html[data-large="true"]{ --fs-base:18px; }
+html[data-compact="true"]{ --gap:9px; --radius:16px; }
+
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body{ margin:0; padding:0; }
+body{
+  font-family:var(--font);
+  font-size:var(--fs-base);
+  background:var(--bg);
+  color:var(--text);
+  line-height:1.4;
+  overflow-x:hidden;
+  -webkit-font-smoothing:antialiased;
+  transition:background .3s ease,color .3s ease;
+  min-height:100vh;
+}
+button{ font-family:inherit; font-size:inherit; cursor:pointer; color:inherit; }
+input,select,textarea{ font-family:inherit; font-size:1rem; }
+input[type=number]{ -moz-appearance:textfield; }
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+
+/* =========================================================================
+   APP FRAME
+   ========================================================================= */
+#app{
+  max-width:520px;
+  margin:0 auto;
+  min-height:100vh;
+  position:relative;
+  padding:calc(env(safe-area-inset-top) + 8px) 16px calc(env(safe-area-inset-bottom) + 90px);
+}
+/* water-fill layer lives behind the hydration screen */
+#waterFill{
+  position:fixed; left:0; right:0; bottom:0; height:0%;
+  background:linear-gradient(180deg, rgba(10,132,255,.42), rgba(10,132,255,.62));
+  z-index:0; pointer-events:none; transition:height .7s cubic-bezier(.22,1,.36,1);
+  opacity:0;
+}
+#waterFill::before{
+  content:""; position:absolute; top:-18px; left:0; right:0; height:22px;
+  background:radial-gradient(ellipse at 50% 100%, rgba(10,132,255,.55), transparent 70%);
+}
+body.hydration-active #waterFill{ opacity:1; }
+#app{ position:relative; z-index:1; }
+
+/* =========================================================================
+   HEADER
+   ========================================================================= */
+.topbar{
+  display:flex; align-items:center; gap:10px; min-height:44px; margin-bottom:10px;
+}
+.topbar h1{ font-size:1.9rem; font-weight:800; letter-spacing:-.03em; margin:0; flex:1; }
+.topbar .sub{ font-size:.82rem; color:var(--text-dim); font-weight:500; }
+.back-btn{
+  display:none; align-items:center; gap:4px; background:none; border:none;
+  color:var(--accent); font-size:1.05rem; font-weight:600; padding:6px 4px 6px 0; margin-left:-4px;
+}
+.back-btn svg{ width:20px; height:20px; }
+.screen-title{ font-size:1.5rem; font-weight:800; letter-spacing:-.02em; margin:2px 0 14px; }
+.screen-date{ font-size:.85rem; color:var(--text-dim); font-weight:500; margin-top:-10px; margin-bottom:14px; }
+
+/* =========================================================================
+   CARDS / LAYOUT
+   ========================================================================= */
+.card{
+  background:var(--card); border-radius:var(--radius); padding:16px; margin-bottom:var(--gap);
+  border:1px solid var(--border); box-shadow:var(--shadow);
+}
+.card.flush{ padding:0; overflow:hidden; }
+.card h3{ margin:0 0 10px; font-size:1.05rem; font-weight:700; letter-spacing:-.01em; }
+.card .hint{ color:var(--text-dim); font-size:.82rem; }
+.muted{ color:var(--text-dim); }
+.faint{ color:var(--text-faint); }
+.row{ display:flex; gap:10px; align-items:center; }
+.row.wrap{ flex-wrap:wrap; }
+.spread{ justify-content:space-between; }
+.grid2{ display:grid; grid-template-columns:1fr 1fr; gap:var(--gap); }
+.grid3{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.spacer{ height:6px; }
+.divider{ height:1px; background:var(--border); margin:12px 0; }
+
+/* =========================================================================
+   HOME GRID
+   ========================================================================= */
+.home-grid{ display:grid; grid-template-columns:1fr 1fr; gap:var(--gap); }
+.tile{
+  position:relative; background:var(--card); border:1px solid var(--border);
+  border-radius:var(--radius); padding:16px; text-align:left; min-height:104px;
+  display:flex; flex-direction:column; justify-content:space-between; box-shadow:var(--shadow);
+  transition:transform .12s ease, background .2s ease;
+}
+.tile:active{ transform:scale(.97); }
+.tile .ic{ font-size:1.7rem; line-height:1; }
+.tile .nm{ font-weight:700; font-size:1.02rem; letter-spacing:-.01em; }
+.tile .meta{ font-size:.78rem; color:var(--text-dim); margin-top:2px; min-height:1.1em; }
+.tile .badge-dot{ position:absolute; top:14px; right:14px; width:9px; height:9px; border-radius:50%; }
+
+/* =========================================================================
+   BUTTONS
+   ========================================================================= */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:7px;
+  min-height:var(--tap); padding:0 16px; border-radius:13px; border:1px solid var(--border-strong);
+  background:var(--card-2); color:var(--text); font-weight:600; font-size:.95rem;
+  transition:transform .1s ease, opacity .2s ease; user-select:none;
+}
+.btn:active{ transform:scale(.97); }
+.btn.full{ width:100%; }
+.btn.primary{ background:var(--accent); border-color:var(--accent); color:#fff; }
+.btn.good{ background:var(--good); border-color:var(--good); color:#04210d; }
+.btn.warn{ background:var(--warn); border-color:var(--warn); color:#2a2400; }
+.btn.bad{ background:var(--bad); border-color:var(--bad); color:#fff; }
+.btn.ghost{ background:transparent; }
+.btn.sm{ min-height:38px; padding:0 12px; font-size:.85rem; border-radius:10px; }
+.btn.tiny{ min-height:30px; padding:0 9px; font-size:.78rem; border-radius:8px; }
+.btn[disabled]{ opacity:.4; pointer-events:none; }
+.btn-row{ display:flex; gap:10px; flex-wrap:wrap; }
+.btn-row .btn{ flex:1; min-width:0; }
+.iconbtn{
+  width:38px; height:38px; min-height:0; padding:0; border-radius:10px;
+  display:inline-flex; align-items:center; justify-content:center; background:var(--card-2);
+  border:1px solid var(--border); font-size:1.1rem;
+}
+
+/* =========================================================================
+   FIELDS
+   ========================================================================= */
+label.field{ display:block; margin-bottom:12px; }
+label.field > span{ display:block; font-size:.8rem; color:var(--text-dim); margin-bottom:5px; font-weight:600; }
+.input, input.input, select.input, textarea.input{
+  width:100%; background:var(--field); color:var(--text); border:1px solid var(--border-strong);
+  border-radius:12px; padding:12px 13px; min-height:var(--tap); outline:none; transition:border-color .15s ease;
+}
+.input:focus{ border-color:var(--accent); }
+textarea.input{ min-height:64px; resize:vertical; }
+.input-unit{ position:relative; }
+.input-unit .u{ position:absolute; right:13px; top:50%; transform:translateY(-50%); color:var(--text-faint); font-size:.85rem; pointer-events:none; }
+.input-unit input{ padding-right:46px; }
+.seg{ display:flex; background:var(--card-2); border-radius:11px; padding:3px; gap:3px; border:1px solid var(--border); }
+.seg button{
+  flex:1; min-height:36px; border:none; border-radius:8px; background:transparent; color:var(--text-dim);
+  font-weight:600; font-size:.85rem;
+}
+.seg button.on{ background:var(--accent); color:#fff; }
+.toggle{ width:51px; height:31px; border-radius:16px; background:var(--card-2); border:1px solid var(--border-strong); position:relative; transition:background .2s ease; flex:none; }
+.toggle .knob{ position:absolute; top:2px; left:2px; width:25px; height:25px; border-radius:50%; background:#fff; transition:left .2s ease; box-shadow:0 1px 3px rgba(0,0,0,.4); }
+.toggle.on{ background:var(--good); border-color:var(--good); }
+.toggle.on .knob{ left:23px; }
+
+/* =========================================================================
+   PROGRESS / STATS
+   ========================================================================= */
+.stat-big{ font-size:2.1rem; font-weight:800; letter-spacing:-.03em; line-height:1; }
+.stat-label{ font-size:.78rem; color:var(--text-dim); font-weight:600; }
+.bar{ height:9px; background:var(--card-2); border-radius:6px; overflow:hidden; }
+.bar > i{ display:block; height:100%; border-radius:6px; background:var(--accent); transition:width .5s ease; }
+.ring{ display:inline-grid; place-items:center; }
+.chips{ display:flex; gap:7px; flex-wrap:wrap; }
+.chip{ font-size:.72rem; font-weight:700; padding:4px 9px; border-radius:20px; background:var(--card-2); border:1px solid var(--border); }
+.chip.blue{ color:var(--hydration); } .chip.orange{ color:var(--caffeine); }
+.chip.pink{ color:var(--sugar); } .chip.red{ color:var(--alcohol); }
+.pill{ font-size:.7rem; font-weight:700; padding:3px 8px; border-radius:7px; letter-spacing:.02em; }
+.pill.good{ background:rgba(48,209,88,.16); color:var(--good); }
+.pill.warn{ background:rgba(255,214,10,.16); color:var(--warn); }
+.pill.bad{ background:rgba(255,69,58,.16); color:var(--bad); }
+.pill.neutral{ background:var(--card-2); color:var(--text-dim); }
+.trend{ font-size:.85rem; font-weight:700; }
+.trend.up{ color:var(--good); } .trend.down{ color:var(--bad); } .trend.flat{ color:var(--text-dim); }
+
+/* =========================================================================
+   LISTS
+   ========================================================================= */
+.list-item{ display:flex; align-items:center; gap:12px; padding:12px 14px; border-bottom:1px solid var(--border); }
+.list-item:last-child{ border-bottom:none; }
+.list-item .li-ic{ font-size:1.3rem; width:30px; text-align:center; flex:none; }
+.list-item .li-main{ flex:1; min-width:0; }
+.list-item .li-title{ font-weight:600; font-size:.95rem; }
+.list-item .li-sub{ font-size:.78rem; color:var(--text-dim); }
+.list-item .li-actions{ display:flex; gap:6px; flex:none; }
+.empty{ text-align:center; color:var(--text-dim); padding:26px 12px; font-size:.9rem; }
+.empty .big{ font-size:2rem; display:block; margin-bottom:6px; opacity:.7; }
+
+/* =========================================================================
+   DRINK GRID
+   ========================================================================= */
+.cat-tabs{ display:flex; gap:8px; overflow-x:auto; padding:2px 0 8px; margin:0 -16px; padding-left:16px; padding-right:16px; -webkit-overflow-scrolling:touch; }
+.cat-tabs::-webkit-scrollbar{ display:none; }
+.cat-tab{ flex:none; padding:8px 14px; border-radius:20px; background:var(--card-2); border:1px solid var(--border); font-size:.85rem; font-weight:600; color:var(--text-dim); white-space:nowrap; }
+.cat-tab.on{ background:var(--accent); border-color:var(--accent); color:#fff; }
+.drink-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.drink-card{
+  background:var(--card); border:1px solid var(--border); border-radius:16px; padding:13px; text-align:left;
+  display:flex; flex-direction:column; gap:3px; transition:transform .1s ease;
+}
+.drink-card:active{ transform:scale(.96); }
+.drink-card .dk-ic{ font-size:1.6rem; }
+.drink-card .dk-nm{ font-weight:700; font-size:.92rem; letter-spacing:-.01em; }
+.drink-card .dk-stats{ display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; font-size:.72rem; font-weight:700; }
+.dk-h{ color:var(--hydration); } .dk-c{ color:var(--caffeine); } .dk-s{ color:var(--sugar); } .dk-a{ color:var(--alcohol); }
+
+/* =========================================================================
+   STRENGTH TABLE
+   ========================================================================= */
+.ex-block{ background:var(--card-2); border-radius:14px; padding:12px; margin-bottom:12px; border:1px solid var(--border); }
+.ex-head{ display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+.ex-head input{ flex:1; background:var(--field); border:1px solid var(--border); border-radius:9px; padding:8px 10px; font-weight:700; min-height:40px; }
+.set-table{ width:100%; border-collapse:collapse; }
+.set-table th{ font-size:.68rem; color:var(--text-dim); font-weight:700; text-align:center; padding:4px 2px; text-transform:uppercase; letter-spacing:.03em; }
+.set-table td{ padding:3px 2px; text-align:center; }
+.set-table td.setn{ font-weight:800; color:var(--text-dim); width:30px; }
+.set-table td.prev{ font-size:.78rem; color:var(--text-faint); width:74px; }
+.set-table input{ width:100%; background:var(--field); border:1px solid var(--border); border-radius:8px; padding:7px 2px; text-align:center; min-height:38px; }
+.set-table .donecell{ width:42px; }
+.setdone{ width:30px; height:30px; border-radius:8px; border:1.5px solid var(--border-strong); background:transparent; display:inline-flex; align-items:center; justify-content:center; font-size:.95rem; }
+.setdone.on{ background:var(--good); border-color:var(--good); color:#04210d; }
+.del-set{ color:var(--bad); background:none; border:none; font-size:1.1rem; padding:2px 4px; }
+
+/* =========================================================================
+   TIMER
+   ========================================================================= */
+.timer{ display:flex; align-items:center; gap:12px; background:var(--card-2); border-radius:14px; padding:12px 14px; border:1px solid var(--border); }
+.timer .tdisp{ font-size:1.7rem; font-weight:800; font-variant-numeric:tabular-nums; letter-spacing:-.02em; flex:1; }
+
+/* =========================================================================
+   CHARTS
+   ========================================================================= */
+.chart-wrap{ width:100%; overflow:hidden; }
+.chart-wrap svg{ width:100%; height:auto; display:block; }
+.chart-legend{ display:flex; gap:14px; flex-wrap:wrap; font-size:.76rem; margin-top:8px; }
+.chart-legend span{ display:flex; align-items:center; gap:5px; color:var(--text-dim); }
+.chart-legend i{ width:11px; height:11px; border-radius:3px; display:inline-block; }
+.chart-pick{ width:100%; }
+
+/* =========================================================================
+   MODAL / SHEET
+   ========================================================================= */
+.sheet-back{ position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:50; display:none; align-items:flex-end; backdrop-filter:blur(3px); }
+.sheet-back.open{ display:flex; }
+.sheet{ width:100%; max-width:520px; margin:0 auto; background:var(--bg-2); border-radius:24px 24px 0 0; padding:8px 18px calc(env(safe-area-inset-bottom) + 22px); max-height:88vh; overflow-y:auto; border:1px solid var(--border); border-bottom:none; animation:slideup .28s cubic-bezier(.22,1,.36,1); }
+@keyframes slideup{ from{ transform:translateY(100%); } to{ transform:translateY(0); } }
+.sheet .grab{ width:38px; height:5px; border-radius:3px; background:var(--border-strong); margin:8px auto 12px; }
+.sheet h3{ margin:0 0 14px; font-size:1.25rem; font-weight:800; letter-spacing:-.02em; }
+
+/* =========================================================================
+   TOAST + NAV
+   ========================================================================= */
+#toast{ position:fixed; left:50%; bottom:calc(env(safe-area-inset-bottom) + 96px); transform:translateX(-50%) translateY(20px); background:var(--card); color:var(--text); padding:12px 18px; border-radius:14px; box-shadow:var(--shadow); border:1px solid var(--border-strong); font-size:.9rem; font-weight:600; z-index:100; opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease; max-width:90%; text-align:center; }
+#toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+.tabbar{ position:fixed; bottom:0; left:0; right:0; z-index:40; display:flex; justify-content:space-around; padding:8px 6px calc(env(safe-area-inset-bottom) + 8px); background:color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter:blur(18px); border-top:1px solid var(--border); }
+.tabbar .tab{ display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; color:var(--text-faint); font-size:.62rem; font-weight:600; padding:4px 10px; min-width:54px; }
+.tabbar .tab .ti{ font-size:1.25rem; }
+.tabbar .tab.on{ color:var(--accent); }
+
+/* =========================================================================
+   SCREENS
+   ========================================================================= */
+.screen{ display:none; animation:fade .25s ease; }
+.screen.active{ display:block; }
+@keyframes fade{ from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:none; } }
+
+.label-sm{ font-size:.78rem; color:var(--text-dim); font-weight:600; margin-bottom:6px; }
+.tgt-box{ background:var(--accent-soft); border:1px solid color-mix(in srgb,var(--accent) 30%, transparent); border-radius:14px; padding:13px 15px; margin-bottom:14px; }
+.tgt-box .tgt-lab{ font-size:.76rem; color:var(--accent); font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+.tgt-box .tgt-val{ font-size:1.25rem; font-weight:800; margin-top:3px; }
+.warnbox{ background:rgba(255,214,10,.12); border:1px solid rgba(255,214,10,.3); color:var(--warn); border-radius:12px; padding:11px 14px; font-size:.86rem; font-weight:600; margin-bottom:14px; }
+.cal-strip{ display:flex; gap:7px; overflow-x:auto; padding-bottom:6px; margin:0 -2px; }
+.cal-strip::-webkit-scrollbar{ display:none; }
+.cal-day{ flex:none; width:62px; border-radius:13px; padding:9px 4px; text-align:center; background:var(--card); border:1px solid var(--border); }
+.cal-day .cd-dow{ font-size:.66rem; color:var(--text-dim); font-weight:700; text-transform:uppercase; }
+.cal-day .cd-num{ font-size:1.05rem; font-weight:800; margin:2px 0; }
+.cal-day .cd-w{ font-size:.62rem; font-weight:700; line-height:1.15; min-height:2.3em; display:flex; align-items:center; justify-content:center; }
+.cal-day.today{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+.sched-list .list-item .li-sub small{ opacity:.8; }
+.wk-type-run{ color:var(--accent); } .wk-type-str{ color:var(--caffeine); } .wk-type-rest{ color:var(--text-dim); }
+
+.kv{ display:flex; justify-content:space-between; align-items:baseline; padding:7px 0; border-bottom:1px solid var(--border); }
+.kv:last-child{ border-bottom:none; }
+.kv .k{ color:var(--text-dim); font-size:.88rem; }
+.kv .v{ font-weight:700; font-variant-numeric:tabular-nums; }
+
+.metric-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.metric{ background:var(--card-2); border:1px solid var(--border); border-radius:14px; padding:12px; }
+.metric .m-lab{ font-size:.72rem; color:var(--text-dim); font-weight:600; }
+.metric .m-val{ font-size:1.35rem; font-weight:800; letter-spacing:-.02em; margin-top:2px; }
+.metric .m-unit{ font-size:.72rem; color:var(--text-faint); font-weight:600; }
+.metric .m-chg{ font-size:.74rem; font-weight:700; margin-top:3px; }
+
+.summary-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.summary-grid .metric .m-val{ font-size:1.2rem; }
+
+/* ---- supplementary helpers for hydration/nutrition/body/teeth/trends/data/settings ---- */
+.section-h{ font-size:1.05rem; font-weight:800; letter-spacing:-.01em; margin:18px 2px 10px; }
+.hint{ color:var(--text-dim); font-size:.82rem; }
+.bar > .fillb{ display:block; height:100%; border-radius:6px; background:var(--accent); transition:width .5s ease; }
+.serv-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
+.serv-grid button{ background:var(--card-2); border:1px solid var(--border); border-radius:11px; padding:9px 4px; color:var(--text); font-weight:700; font-size:.85rem; line-height:1.15; }
+.serv-grid button small{ display:block; font-size:.68rem; color:var(--text-faint); font-weight:600; margin-top:2px; }
+.serv-grid button.on{ background:var(--accent); border-color:var(--accent); color:#fff; }
+.serv-grid button.on small{ color:rgba(255,255,255,.85); }
+.m-chg.up{ color:var(--good); } .m-chg.down{ color:var(--bad); } .m-chg.flat{ color:var(--text-faint); }
+.m-chg.up.inv{ color:var(--bad); } .m-chg.down.inv{ color:var(--good); }
+.danger{ border-color:rgba(255,69,58,.4) !important; }
+.danger-zone{ border:1px solid rgba(255,69,58,.35); border-radius:14px; padding:14px; margin-top:8px; }
+.field-row{ display:flex; gap:10px; align-items:flex-end; }
+.field-row .field{ flex:1; margin-bottom:0; }
+.tt-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 0; border-bottom:1px solid var(--border); }
+.tt-row:last-child{ border-bottom:none; }
+.tt-row .tt-lab{ font-weight:600; }
+.tt-row input{ width:96px; background:var(--field); border:1px solid var(--border); border-radius:9px; padding:8px; text-align:right; min-height:38px; color:var(--text); }
+.brush-card{ display:flex; align-items:center; gap:14px; }
+.brush-card .bc-emoji{ font-size:1.8rem; }
+.brush-card .bc-main{ flex:1; }
+.chart-card{ margin-bottom:14px; }
+.chart-title{ font-weight:700; font-size:.95rem; margin-bottom:2px; }
+.chart-sub{ font-size:.76rem; color:var(--text-dim); margin-bottom:10px; }
+.no-data{ font-size:.82rem; color:var(--text-faint); padding:18px 0; text-align:center; }
+.exp-row{ display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
+.exp-row:last-child{ border-bottom:none; }
+.exp-row .ex-nm{ flex:1; font-weight:600; font-size:.92rem; }
+@media (max-width:360px){ .home-grid,.drink-grid,.grid2,.metric-grid,.summary-grid{ grid-template-columns:1fr; } .serv-grid{ grid-template-columns:repeat(2,1fr); } }
+@media (prefers-reduced-motion: reduce){ *{ animation-duration:.001s !important; transition-duration:.05s !important; } }
+</style>
+</head>
+<body>
+<div id="waterFill"></div>
+<div id="app">
+  <div class="topbar">
+    <button class="back-btn" id="backBtn" onclick="goHome()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      Home
+    </button>
+    <h1 id="topTitle">Daily</h1>
+  </div>
+  <div id="screens"></div>
+</div>
+
+<div class="tabbar" id="tabbar"></div>
+<div id="toast"></div>
+<div class="sheet-back" id="sheetBack" onclick="if(event.target===this)closeSheet()">
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<script>
+/* =====================================================================
+   DAILY — single-file health tracker
+   Storage strategy:
+     - Whole app state lives in one in-memory object (STATE).
+     - On boot we hydrate it from the best backend available:
+         1. window.storage  (Claude artifact persistent storage)
+         2. localStorage    (downloaded / self-hosted file)
+         3. in-memory only  (last resort; warns the user)
+     - Reads are always synchronous from STATE.
+     - Writes mutate STATE then persist in the background (debounced).
+   This keeps every UI handler simple and sync while still persisting.
+   ===================================================================== */
+
+/* ---------- storage backend detection ---------- */
+const STORE_KEY = "daily_health_tracker_v1";
+let BACKEND = "memory";           // resolved during boot (local cache layer)
+let MEM = null;                   // in-memory fallback blob
+
+/* ---------- cloud sync (Google Sheets via Apps Script web app) ----------
+   Canonical store when configured; the local backend above is the offline
+   cache. Configure either by hard-coding below, or via Settings → Cloud sync
+   (saved on this device only). */
+const DEFAULT_SYNC_URL   = "https://script.google.com/macros/s/AKfycbzp83668hb7VfAvyoo8YX2JOj1kpGhoC2URleI6MhiPfKLYBgzXCM26J-wjIIJevG5jag/exec";
+const DEFAULT_SYNC_TOKEN = "";    // optional shared secret; must match the Apps Script
+const SYNC_CFG_KEY = "daily_sync_cfg_v1";
+let SYNC = { state:"disabled", lastSync:null, error:null };  // for the UI
+
+async function backendGet(){
+  if (BACKEND === "window") {
+    try { const r = await window.storage.get(STORE_KEY); return r ? r.value : null; }
+    catch(e){ return null; }
+  }
+  if (BACKEND === "local") {
+    try { return localStorage.getItem(STORE_KEY); } catch(e){ return null; }
+  }
+  return MEM;
+}
+async function backendSet(val){
+  if (BACKEND === "window") {
+    try { await window.storage.set(STORE_KEY, val, false); return true; }
+    catch(e){ return false; }
+  }
+  if (BACKEND === "local") {
+    try { localStorage.setItem(STORE_KEY, val); return true; } catch(e){ return false; }
+  }
+  MEM = val; return true;
+}
+async function resolveBackend(){
+  // Prefer artifact persistent storage if present
+  if (typeof window !== "undefined" && window.storage && typeof window.storage.get === "function") {
+    BACKEND = "window"; return;
+  }
+  // Else try localStorage (works in a downloaded/hosted file)
+  try {
+    const k = "__daily_probe__";
+    localStorage.setItem(k, "1"); localStorage.removeItem(k);
+    BACKEND = "local"; return;
+  } catch(e){ /* fall through */ }
+  BACKEND = "memory";
+}
+
+/* ---------- cloud sync helpers ---------- */
+function getSyncCfg(){
+  let cfg = null;
+  try { const raw = localStorage.getItem(SYNC_CFG_KEY); if (raw) cfg = JSON.parse(raw); } catch(e){}
+  return {
+    url:   (cfg && cfg.url   != null) ? cfg.url   : DEFAULT_SYNC_URL,
+    token: (cfg && cfg.token != null) ? cfg.token : DEFAULT_SYNC_TOKEN
+  };
+}
+function setSyncCfg(url, token){
+  try { localStorage.setItem(SYNC_CFG_KEY, JSON.stringify({ url:url||"", token:token||"" })); return true; }
+  catch(e){ return false; }
+}
+function syncUrl(){ return (getSyncCfg().url || "").trim(); }
+function syncToken(){ return (getSyncCfg().token || "").trim(); }
+function remoteEnabled(){ return !!syncUrl(); }
+
+/* GET the whole-state blob from the sheet. Throws on network/parse/error. */
+async function remoteLoad(){
+  const url = syncUrl(); if (!url) throw new Error("No sync URL");
+  const sep = url.includes("?") ? "&" : "?";
+  const full = url + sep + "token=" + encodeURIComponent(syncToken()) + "&t=" + Date.now();
+  const ctl = (typeof AbortController!=="undefined") ? new AbortController() : null;
+  const tm = ctl ? setTimeout(()=>ctl.abort(), 9000) : null;
+  let res;
+  try { res = await fetch(full, ctl ? { signal: ctl.signal } : {}); }
+  finally { if (tm) clearTimeout(tm); }
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const text = await res.text();
+  const data = text && text.trim() ? JSON.parse(text) : {};
+  if (data && data.error) throw new Error(String(data.error));
+  return data;
+}
+/* POST the whole-state blob to the sheet (last-write-wins). */
+async function remoteSave(stateObj){
+  const url = syncUrl(); if (!url) throw new Error("No sync URL");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },  // simple request: no CORS preflight
+    body: JSON.stringify({ token: syncToken(), state: stateObj })
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  let out = {};
+  try { out = JSON.parse(await res.text()); } catch(e){}
+  if (out && out.ok === false) throw new Error(out.error || "Save rejected");
+  return out;
+}
+
+/* A state with no logged data at all (used to avoid a first-sync wipe). */
+function isEmptyState(s){
+  if (!s) return true;
+  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs"];
+  return arrs.every(k => !Array.isArray(s[k]) || s[k].length === 0);
+}
+
+function setSyncState(state, error){
+  SYNC.state = state;
+  if (error !== undefined) SYNC.error = error;
+  if (state === "ok") { SYNC.lastSync = Date.now(); SYNC.error = null; }
+  // refresh the sync card if the settings screen is open
+  try { if (typeof CURRENT!=="undefined" && CURRENT==="settings" && typeof renderSyncCard==="function") renderSyncCard(); } catch(e){}
+}
+
+/* ---------- defaults ---------- */
+function defaultSettings(){
+  return {
+    hydrationGoalMl: 2500,
+    nutritionTargets: { calories:2200, fat:70, satFat:20, carbs:260, sugar:90, fibre:30, protein:120, salt:6 },
+    brushingTargetSec: 120,
+    units: { weight:"kg", distance:"km", volume:"ml" },
+    theme: "dark",
+    accent: "#0a84ff",
+    compact: false,
+    largeText: false,
+    firstLongRunRun: 6,   // minutes running interval for the very first Long Run
+    firstLongRunWalk: 3   // minutes walking interval for the very first Long Run
+  };
+}
+
+/* Starter drink database. coeff = hydration fraction (can be negative). */
+function defaultDrinks(){
+  const D = (name,category,pct,opt={}) => ({
+    id: uid("drk"), name, category, hydrationPct:pct,
+    sugar: opt.sugar||0, caffeine: opt.caffeine||0, alcoholPct: opt.alcohol||0,
+    icon: opt.icon||"🥤", defaultMl: opt.ml||250, unit: opt.unit||"glass"
+  });
+  return [
+    // Water
+    D("Mineral water","Water",93,{icon:"💧",ml:250,unit:"glass"}),
+    D("Sparkling water","Water",100,{icon:"🫧",ml:250,unit:"glass"}),
+    D("Lemon water","Water",95,{icon:"🍋",ml:250,unit:"glass"}),
+    D("Coconut water","Water",85,{icon:"🥥",ml:250,unit:"glass"}),
+    // Milk & alternatives
+    D("Yoghurt","Milk & alternatives",50,{icon:"🥛",ml:170,unit:"pot"}),
+    D("Milkshake","Milk & alternatives",72,{icon:"🥤",ml:300,unit:"glass",sugar:10}),
+    D("Kefir","Milk & alternatives",60,{icon:"🥛",ml:200,unit:"glass"}),
+    D("Soy milk","Milk & alternatives",80,{icon:"🥛",ml:250,unit:"glass",sugar:3}),
+    D("Almond milk","Milk & alternatives",85,{icon:"🥛",ml:250,unit:"glass",sugar:1}),
+    D("Chocolate milk","Milk & alternatives",70,{icon:"🍫",ml:250,unit:"glass",caffeine:2,sugar:9}),
+    D("Oat milk","Milk & alternatives",80,{icon:"🥛",ml:250,unit:"glass",sugar:3.5}),
+    D("Rice milk","Milk & alternatives",85,{icon:"🥛",ml:250,unit:"glass",sugar:6.5}),
+    // Coffee
+    D("Latte","Coffee",80,{icon:"☕",ml:250,unit:"cup",caffeine:40}),
+    D("Cappuccino","Coffee",78,{icon:"☕",ml:180,unit:"cup",caffeine:45}),
+    D("Iced coffee","Coffee",80,{icon:"🧊",ml:300,unit:"glass",caffeine:50,sugar:5}),
+    D("Espresso","Coffee",70,{icon:"☕",ml:30,unit:"shot",caffeine:210}),
+    D("Coffee with milk","Coffee",80,{icon:"☕",ml:250,unit:"mug",caffeine:50}),
+    D("Cold brew","Coffee",85,{icon:"🧊",ml:300,unit:"glass",caffeine:55}),
+    D("Frappe","Coffee",65,{icon:"🥤",ml:350,unit:"glass",caffeine:20,sugar:12}),
+    D("Americano","Coffee",85,{icon:"☕",ml:250,unit:"cup",caffeine:45}),
+    D("Mocha","Coffee",72,{icon:"☕",ml:300,unit:"cup",caffeine:50,sugar:9}),
+    D("Decaf coffee","Coffee",85,{icon:"☕",ml:250,unit:"cup"}),
+    // Tea & cocoa
+    D("Iced tea","Tea & cocoa",78,{icon:"🧊",ml:300,unit:"glass",caffeine:12,sugar:6}),
+    D("Green tea","Tea & cocoa",90,{icon:"🍵",ml:250,unit:"cup",caffeine:18}),
+    D("Matcha","Tea & cocoa",85,{icon:"🍵",ml:250,unit:"cup",caffeine:35}),
+    D("Herbal tea","Tea & cocoa",95,{icon:"🌿",ml:250,unit:"cup"}),
+    D("Hot chocolate","Tea & cocoa",40,{icon:"🍫",ml:250,unit:"mug",caffeine:22,sugar:9}),
+    D("Cocoa","Tea & cocoa",65,{icon:"🍫",ml:250,unit:"mug",caffeine:3}),
+    D("Bubble tea","Tea & cocoa",55,{icon:"🧋",ml:400,unit:"cup",caffeine:18,sugar:12}),
+    D("Mate","Tea & cocoa",45,{icon:"🧉",ml:250,unit:"cup",caffeine:3}),
+    D("Milk tea","Tea & cocoa",72,{icon:"🥤",ml:250,unit:"cup",caffeine:20,sugar:8}),
+    D("Oolong tea","Tea & cocoa",90,{icon:"🍵",ml:250,unit:"cup",caffeine:20}),
+    D("Barley tea","Tea & cocoa",93,{icon:"🍵",ml:250,unit:"cup"}),
+    // Juices
+    D("Smoothie","Juices",33,{icon:"🥤",ml:300,unit:"glass"}),
+    D("Squash","Juices",65,{icon:"🧃",ml:250,unit:"glass",sugar:3.5}),
+    D("Vegetable juice","Juices",70,{icon:"🥕",ml:250,unit:"glass",sugar:3}),
+    D("Aloe vera","Juices",65,{icon:"🌵",ml:250,unit:"glass",sugar:8}),
+    // Soda
+    D("Cola","Soda",60,{icon:"🥤",ml:330,unit:"can",caffeine:10,sugar:10.6}),
+    D("Diet cola","Soda",80,{icon:"🥤",ml:330,unit:"can",caffeine:11}),
+    D("Lemonade","Soda",70,{icon:"🍋",ml:330,unit:"glass",sugar:9}),
+    D("Tonic water","Soda",60,{icon:"🥤",ml:200,unit:"glass",sugar:8}),
+    D("Ginger ale","Soda",60,{icon:"🥤",ml:330,unit:"can",sugar:9}),
+    // Sport & wellness
+    D("Energy drink","Sport & wellness",40,{icon:"⚡",ml:250,unit:"can",caffeine:34,sugar:11}),
+    D("Sports drink","Sport & wellness",85,{icon:"🏃",ml:500,unit:"bottle",sugar:6}),
+    D("Protein shake","Sport & wellness",30,{icon:"💪",ml:400,unit:"shaker"}),
+    D("Kombucha","Sport & wellness",80,{icon:"🍶",ml:250,unit:"glass",sugar:4}),
+    D("Electrolyte drink","Sport & wellness",90,{icon:"🧂",ml:500,unit:"bottle",sugar:2}),
+    D("Vitamin drink","Sport & wellness",82,{icon:"💊",ml:500,unit:"bottle",sugar:4}),
+    D("Greens","Sport & wellness",75,{icon:"🥬",ml:300,unit:"glass",sugar:2}),
+    D("ACV drink","Sport & wellness",80,{icon:"🍎",ml:250,unit:"glass",sugar:4}),
+    // Soups / hidden drinks
+    D("Broth","Soups / hidden drinks",77,{icon:"🍲",ml:250,unit:"bowl"}),
+    D("Miso soup","Soups / hidden drinks",80,{icon:"🍜",ml:250,unit:"bowl"}),
+    D("Chicory","Soups / hidden drinks",85,{icon:"☕",ml:250,unit:"cup"}),
+    D("Turkish coffee","Soups / hidden drinks",75,{icon:"☕",ml:60,unit:"cup",caffeine:120}),
+    D("Berry drink","Soups / hidden drinks",60,{icon:"🫐",ml:250,unit:"glass",sugar:8}),
+    D("Kompot","Soups / hidden drinks",70,{icon:"🍑",ml:250,unit:"glass",sugar:6}),
+    D("Kissel","Soups / hidden drinks",60,{icon:"🍓",ml:250,unit:"glass",sugar:10}),
+    D("Sugarcane juice","Soups / hidden drinks",55,{icon:"🎋",ml:250,unit:"glass",sugar:13}),
+    D("Kvass","Soups / hidden drinks",50,{icon:"🍞",ml:250,unit:"glass",sugar:5}),
+    D("Buttermilk","Soups / hidden drinks",60,{icon:"🥛",ml:250,unit:"glass"}),
+    D("Ayran","Soups / hidden drinks",43,{icon:"🥛",ml:250,unit:"glass"}),
+    // Alcohol
+    D("Beer","Alcohol",-60,{icon:"🍺",ml:500,unit:"pint",alcohol:5}),
+    D("Wine","Alcohol",-160,{icon:"🍷",ml:175,unit:"glass",alcohol:12}),
+    D("Strong alcohol","Alcohol",-350,{icon:"🥃",ml:25,unit:"shot",alcohol:40}),
+    D("Non-alcoholic cocktail","Alcohol",60,{icon:"🍹",ml:250,unit:"glass",sugar:8}),
+    D("Cocktail","Alcohol",-160,{icon:"🍸",ml:200,unit:"glass",alcohol:13,sugar:8}),
+    D("Sparkling wine","Alcohol",-160,{icon:"🥂",ml:125,unit:"glass",alcohol:12}),
+    D("Cider","Alcohol",-60,{icon:"🍏",ml:500,unit:"pint",alcohol:5,sugar:5}),
+    D("Non-alcoholic beer","Alcohol",60,{icon:"🍺",ml:330,unit:"bottle"}),
+    // Other
+    D("Other","Other",50,{icon:"🥤",ml:250,unit:"glass"})
+  ];
+}
+
+function defaultState(){
+  return {
+    version:1,
+    settings: defaultSettings(),
+    workoutLogs: [],         // run + strength session records (one per logged workout)
+    strengthLogs: [],        // detailed strength sets, linked by workoutLogId
+    hydrationLogs: [],       // individual drink entries
+    nutritionLogs: [],       // one per day
+    bodyCompositionLogs: [], // one per day
+    brushingLogs: [],        // one per day-slot
+    drinkDatabase: defaultDrinks()
+  };
+}
+
+let STATE = defaultState();
+
+/* ---------- persistence ---------- */
+let saveTimer = null, remoteTimer = null;
+async function saveLocal(){ return backendSet(JSON.stringify(STATE)); }
+
+function persist(){
+  // local cache: fast, keeps offline + instant next load
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    const ok = await saveLocal();
+    if (!ok) console.warn("Local persist failed");
+  }, 250);
+  // remote: debounced a touch longer to batch rapid edits
+  if (remoteEnabled()){
+    clearTimeout(remoteTimer);
+    remoteTimer = setTimeout(async () => {
+      setSyncState("saving");
+      try { await remoteSave(STATE); setSyncState("ok"); }
+      catch(e){ setSyncState("error", e.message || String(e)); console.warn("Remote save failed", e); }
+    }, 700);
+  }
+}
+function save(){ STATE.updatedAt = Date.now(); persist(); }
+
+async function loadLocal(){
+  const raw = await backendGet();
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch(e){ console.warn("Bad local data", e); return null; }
+}
+
+async function loadState(){
+  await resolveBackend();
+  // 1) hydrate from the local cache first (instant, works offline)
+  const local = await loadLocal();
+  STATE = local ? mergeDefaults(local) : defaultState();
+
+  // 2) reconcile with the cloud if configured
+  if (!remoteEnabled()){ SYNC.state = "disabled"; return; }
+  setSyncState("loading");
+  try {
+    const remoteRaw = await remoteLoad();
+    const remote = (remoteRaw && Object.keys(remoteRaw).length) ? mergeDefaults(remoteRaw) : null;
+    const rEmpty = isEmptyState(remote), lEmpty = isEmptyState(STATE);
+    if (remote && !rEmpty && (lEmpty || (remote.updatedAt||0) >= (STATE.updatedAt||0))){
+      STATE = remote;            // cloud is newer/authoritative
+      await saveLocal();         // refresh the local cache
+    } else if (!lEmpty){
+      await remoteSave(STATE);    // local is newer or seeding a fresh sheet -> push up
+    }
+    setSyncState("ok");
+  } catch(e){
+    setSyncState("error", e.message || String(e));   // stay on the local copy
+    console.warn("Cloud load failed; working offline", e);
+  }
+}
+/* Make sure newly added fields exist even on old saves. */
+function mergeDefaults(s){
+  const d = defaultState();
+  s.settings = Object.assign({}, d.settings, s.settings||{});
+  s.settings.nutritionTargets = Object.assign({}, d.settings.nutritionTargets, (s.settings.nutritionTargets)||{});
+  s.settings.units = Object.assign({}, d.settings.units, (s.settings.units)||{});
+  ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","drinkDatabase"]
+    .forEach(k => { if(!Array.isArray(s[k])) s[k] = d[k]; });
+  if (!s.drinkDatabase.length) s.drinkDatabase = d.drinkDatabase;
+  s.version = 1;
+  return s;
+}
+
+/* ---------- small utilities ---------- */
+function uid(p="id"){ return p + "_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2,7); }
+function todayISO(){ return toISO(new Date()); }
+function toISO(d){ const z=new Date(d.getTime()-d.getTimezoneOffset()*60000); return z.toISOString().slice(0,10); }
+function fromISO(s){ const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); }
+function addDays(iso,n){ const d=fromISO(iso); d.setDate(d.getDate()+n); return toISO(d); }
+function dayDiff(a,b){ return Math.round((fromISO(a)-fromISO(b))/86400000); }
+function dow(iso){ return ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][fromISO(iso).getDay()]; }
+function dnum(iso){ return fromISO(iso).getDate(); }
+function prettyDate(iso){
+  const d=fromISO(iso), t=todayISO();
+  if(iso===t) return "Today";
+  if(iso===addDays(t,-1)) return "Yesterday";
+  if(iso===addDays(t,1)) return "Tomorrow";
+  return d.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"});
+}
+function num(v,dflt=0){ const n=parseFloat(v); return isFinite(n)?n:dflt; }
+function round(n,dp=1){ const f=Math.pow(10,dp); return Math.round(n*f)/f; }
+function fmt(n,dp=1){ if(n==null||!isFinite(n)) return "–"; return round(n,dp).toLocaleString("en-GB"); }
+function clamp(n,a,b){ return Math.max(a,Math.min(b,n)); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function byDateDesc(a,b){ return a.date<b.date?1:a.date>b.date?-1:(b.createdAt||0)-(a.createdAt||0); }
+function $(sel,root=document){ return root.querySelector(sel); }
+function $$(sel,root=document){ return Array.from(root.querySelectorAll(sel)); }
+
+let toastTimer=null;
+function toast(msg){
+  const t=$("#toast"); t.textContent=msg; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove("show"),1900);
+}
+
+/* mm:ss formatter for timers/durations */
+function mmss(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60), s=sec%60; return m+":"+String(s).padStart(2,"0"); }
+
+/* =====================================================================
+   WORKOUT SCHEDULER (deterministic, run-first)
+   ---------------------------------------------------------------------
+   The ideal rolling 7-day week is: 1 Long, 1 Medium, 1 Short run +
+   2-3 strength sessions + at least 1 rest day. Running is the priority;
+   strength fits into the gaps. The schedule is rebuilt purely from
+   workout history, so the same history always yields the same plan.
+
+   Internal normalised types: Long, Medium, Short, Legs, Upper1, Upper2,
+   Rest, null(empty). Short Run 1 / Short Run 2 are *scheduling labels*
+   only — both normalise to Short and both log as "Short Run".
+   ===================================================================== */
+
+const STRENGTH_TYPES = ["Legs","Upper 1","Upper 2"];
+const ALL_WORKOUT_TYPES = ["Long Run","Medium Run","Short Run 1","Short Run 2","Legs","Upper 1","Upper 2","Rest Day","Missed Workout"];
+
+function norm(t){
+  switch(t){
+    case "Long Run": return "Long";
+    case "Medium Run": return "Medium";
+    case "Short Run": case "Short Run 1": case "Short Run 2": return "Short";
+    case "Legs": return "Legs";
+    case "Upper 1": return "Upper1";
+    case "Upper 2": return "Upper2";
+    case "Rest Day": return "Rest";
+    default: return null;
+  }
+}
+function isRunNorm(n){ return n==="Long"||n==="Medium"||n==="Short"; }
+function isStrengthNorm(n){ return n==="Legs"||n==="Upper1"||n==="Upper2"; }
+
+/* What a log actually means for scheduling. Missed -> empty (didn't happen). */
+function effectiveNorm(log){
+  if (log.status === "Missed") return null;
+  if (log.status === "Rest Day") return "Rest";
+  return norm(log.actual || log.scheduled);
+}
+
+/* Category label stored against a completed workout (shorts collapse). */
+function categoryLabel(type){
+  const n = norm(type);
+  if (n==="Long") return "Long Run";
+  if (n==="Medium") return "Medium Run";
+  if (n==="Short") return "Short Run";
+  if (n==="Legs") return "Legs";
+  if (n==="Upper1") return "Upper 1";
+  if (n==="Upper2") return "Upper 2";
+  if (n==="Rest") return "Rest Day";
+  return "Missed Workout";
+}
+
+/* Build {iso: normalisedType} from history (completed/rest/etc.). */
+function buildTimeline(){
+  const tl = {};
+  for (const log of STATE.workoutLogs){
+    const n = effectiveNorm(log);
+    if (n !== null) tl[log.date] = n;          // missed stays absent
+  }
+  return tl;
+}
+
+/* ---- window helpers operating on a timeline map ---- */
+function lookback(tl, d, span){       // returns array of norms for the `span` days BEFORE d
+  const out=[];
+  for (let i=1;i<=span;i++){ out.push(tl[addDays(d,-i)] || null); }
+  return out;                          // index 0 = yesterday
+}
+function lastDateOf(tl, before, pred){
+  for (let i=1;i<=120;i++){ const dd=addDays(before,-i); if (tl[dd]!==undefined && pred(tl[dd])) return dd; }
+  return null;
+}
+
+/* Decide the workout for a single future day `d`, given timeline so far. */
+function decideDay(tl, d){
+  const prev = tl[addDays(d,-1)] || null;            // yesterday
+  const w6   = lookback(tl, d, 6);                    // last 6 days
+  const runsPrev6 = w6.filter(isRunNorm).length;
+  const restPrev6 = w6.filter(n=>n==="Rest").length;
+  const activityPrev6 = w6.filter(n=>n!==null).length;
+  const hasLong   = w6.includes("Long");
+  const hasMedium = w6.includes("Medium");
+  const hasShort  = w6.includes("Short");
+
+  const lastLongDate = lastDateOf(tl, d, n=>n==="Long");
+  const lastRunDate  = lastDateOf(tl, d, isRunNorm);
+  const lastRunKind  = lastRunDate ? tl[lastRunDate] : null;
+  // after a Long Run, the next run must be a Short until a Short happens
+  let mustShortAfterLong = false;
+  if (lastLongDate){
+    const shortAfter = lastDateOf(tl, d, n=>n==="Short");
+    mustShortAfterLong = !shortAfter || shortAfter < lastLongDate;
+    // only applies if the most recent run was that Long (no other run since)
+    if (lastRunKind !== "Long") mustShortAfterLong = false;
+  }
+  // two-calendar-day recovery window after a Long Run (no Long/Medium/Legs)
+  const inLongWindow = (lastLongDate && (dayDiff(d,lastLongDate) <= 2));
+
+  // ---- RULE: at least one rest in every rolling 7-day period ----
+  // If the 6 prior days hold training but no rest, today must be a rest.
+  if (restPrev6 === 0 && activityPrev6 > 0) return "Rest";
+
+  const runAllowed = !isRunNorm(prev);   // never two runs in a row
+
+  // ---- run validity by kind ----
+  const longValid   = runAllowed && !hasLong && !inLongWindow && !mustShortAfterLong;
+  const mediumValid = runAllowed && !inLongWindow && !mustShortAfterLong;
+  const shortValid  = runAllowed;
+
+  // ---- STEP 1: keep three runs per rolling 7-day window ----
+  if (runsPrev6 < 3){
+    if (mustShortAfterLong && shortValid) return pickShort(tl, d);
+    if (!hasLong && longValid) return "Long";
+    if (!hasMedium && mediumValid) return "Medium";
+    if (!hasShort && shortValid) return pickShort(tl, d);
+    // all three kinds present but <3 total (rare) -> add a short for flexibility
+    if (shortValid) return pickShort(tl, d);
+  }
+
+  // ---- STEP 2: fit strength around the runs (least-recently-done first) ----
+  const strengthChoice = pickStrength(tl, d, prev, inLongWindow);
+  if (strengthChoice) return strengthChoice;
+
+  // ---- STEP 3: nothing valid -> rest ----
+  return "Rest";
+}
+
+/* Choose Short Run 1 vs Short Run 2 by which variant was scheduled least recently. */
+function pickShort(tl, d){
+  // tl stores "Short" for both; we track variant separately on the schedule object,
+  // so here we just return the normalised "Short" and let the caller assign a label.
+  return "Short";
+}
+
+/* Pick the least-recently-done valid strength workout. */
+function pickStrength(tl, d, prev, inLongWindow){
+  const candidates = [];
+  // Legs: not after Long/Medium, not in 2-day post-long window, not after Legs
+  const legsValid = prev!=="Long" && prev!=="Medium" && prev!=="Legs" && !inLongWindow;
+  // Upper: not the day after any upper session
+  const upperBlocked = (prev==="Upper1" || prev==="Upper2");
+  if (legsValid) candidates.push("Legs");
+  if (!upperBlocked) { candidates.push("Upper1"); candidates.push("Upper2"); }
+  if (!candidates.length) return null;
+
+  // least recently done wins; never-done counts as oldest. Fixed order breaks ties.
+  const order = { "Legs":0, "Upper1":1, "Upper2":2 };
+  let best=null, bestKey=Infinity;
+  for (const c of candidates){
+    const last = lastDateOf(tl, d, n=>n===c);
+    const ageKey = last ? dayDiff(d,last) : 9999;     // bigger = staler
+    // primary: staler first (so use negative age for min-search), secondary: fixed order
+    const key = (-ageKey)*10 + order[c];
+    if (key < bestKey){ bestKey=key; best=c; }
+  }
+  return best;
+}
+
+/* Map an internal normal -> a schedulable display type, choosing SR variant. */
+function toScheduledType(tl, d, n, shortVariantState){
+  if (n==="Long") return "Long Run";
+  if (n==="Medium") return "Medium Run";
+  if (n==="Short"){
+    // alternate SR1 / SR2 by which was scheduled least recently
+    const last1 = shortVariantState.lastSR1, last2 = shortVariantState.lastSR2;
+    let variant;
+    if (!last1 && !last2) variant = "Short Run 1";
+    else if (!last1) variant = "Short Run 1";
+    else if (!last2) variant = "Short Run 2";
+    else variant = (last1 <= last2) ? "Short Run 1" : "Short Run 2";
+    if (variant==="Short Run 1") shortVariantState.lastSR1 = d; else shortVariantState.lastSR2 = d;
+    return variant;
+  }
+  if (n==="Legs") return "Legs";
+  if (n==="Upper1") return "Upper 1";
+  if (n==="Upper2") return "Upper 2";
+  return "Rest Day";
+}
+
+/* Generate the rolling 28-day schedule starting today. Logged days are shown
+   as-is and fed into the timeline; unlogged days get a fresh suggestion. */
+function generateSchedule(days=28){
+  const tl = buildTimeline();
+  const start = todayISO();
+  const logByDate = {}; STATE.workoutLogs.forEach(l => { logByDate[l.date] = l; });
+
+  // seed short-variant alternation from history
+  const sv = { lastSR1:null, lastSR2:null };
+  STATE.workoutLogs.forEach(l=>{
+    if (l.scheduled==="Short Run 1") sv.lastSR1 = l.date;
+    if (l.scheduled==="Short Run 2") sv.lastSR2 = l.date;
+  });
+
+  const out=[];
+  for (let i=0;i<days;i++){
+    const d = addDays(start, i);
+    if (logByDate[d]){
+      const log = logByDate[d];
+      out.push({ date:d, logged:true, log,
+                 scheduledType: log.scheduled || categoryLabel(log.actual),
+                 status: log.status });
+    } else {
+      const n = decideDay(tl, d);
+      const schedType = toScheduledType(tl, d, n, sv);
+      tl[d] = n;                       // commit so later days see it
+      out.push({ date:d, logged:false, scheduledType: schedType, status:"Scheduled" });
+    }
+  }
+  return out;
+}
+
+/* Catch-up: any past day (from the first workout log up to yesterday) with no
+   log gets auto-filled. A scheduled Rest day is logged as a completed Rest
+   (counts as done); anything else is logged as Missed. Runs on boot so the
+   moment a day ends without a workout, it lands as "not done" on next open. */
+function backfillMissedWorkouts(){
+  const logs = STATE.workoutLogs;
+  if (!logs.length) return false;                 // schedule hasn't started yet
+  let anchor = logs[0].date;
+  for (const l of logs) if (l.date < anchor) anchor = l.date;
+  const today = todayISO();
+  if (anchor >= today) return false;
+
+  const have = {}; logs.forEach(l => { have[l.date] = true; });
+  const tl = buildTimeline();                     // live timeline we extend as we go
+  const sv = { lastSR1:null, lastSR2:null };
+  logs.forEach(l => {
+    if (l.scheduled==="Short Run 1") sv.lastSR1 = l.date;
+    if (l.scheduled==="Short Run 2") sv.lastSR2 = l.date;
+  });
+
+  let changed = false;
+  for (let d = anchor; d < today; d = addDays(d,1)){
+    if (have[d]) continue;
+    const n = decideDay(tl, d);
+    if (n === "Rest"){
+      STATE.workoutLogs.push({ id:uid("wk"), date:d, createdAt:Date.now(),
+        scheduled:"Rest Day", actual:null, category:"Rest Day", status:"Rest Day", auto:true });
+      tl[d] = "Rest";                             // a rest counts in the timeline
+    } else {
+      STATE.workoutLogs.push({ id:uid("wk"), date:d, createdAt:Date.now(),
+        scheduled: toScheduledType(tl, d, n, sv), actual:null,
+        category:"Missed Workout", status:"Missed", auto:true });
+      // a miss "didn't happen" -> deliberately left absent from the timeline
+    }
+    have[d] = true;
+    changed = true;
+  }
+  return changed;
+}
+
+/* ---- run progression / targets ---- */
+function completedRuns(kindNorm){
+  return STATE.workoutLogs
+    .filter(l => (l.status==="Completed"||l.status==="Unscheduled") && norm(l.actual)===kindNorm)
+    .sort(byDateDesc);
+}
+function mostRecentLong(){ return completedRuns("Long")[0] || null; }
+
+function nextLongTargets(){
+  const last = mostRecentLong();
+  if (!last){
+    return { run: STATE.settings.firstLongRunRun, walk: STATE.settings.firstLongRunWalk, first:true };
+  }
+  const prevRun  = num(last.actualRun, last.targetRun || STATE.settings.firstLongRunRun);
+  const prevWalk = num(last.actualWalk, last.targetWalk || STATE.settings.firstLongRunWalk);
+  const newRun = prevRun * 1.1;
+  const newWalk = ((prevWalk / prevRun) * newRun) / 0.85;
+  return { run: round(newRun,2), walk: round(newWalk,2), first:false };
+}
+function mediumTarget(){ const l=mostRecentLong(); return l ? round(num(l.actualDistance)*0.5,2) : null; }
+function shortTarget(){ const l=mostRecentLong(); return l ? round(num(l.actualDistance)*0.25,2) : null; }
+
+/* =====================================================================
+   APP FRAMEWORK — screens, navigation, shared widgets
+   ===================================================================== */
+const TILES = [
+  { id:"workouts",  ic:"🏃", nm:"Workouts",        meta:s=>s.workoutMeta },
+  { id:"hydration", ic:"💧", nm:"Hydration",       meta:s=>s.hydrationMeta },
+  { id:"nutrition", ic:"🍽️", nm:"Nutrition",       meta:s=>s.nutritionMeta },
+  { id:"body",      ic:"⚖️", nm:"Body composition",meta:s=>s.bodyMeta },
+  { id:"teeth",     ic:"🪥", nm:"Teeth brushing",  meta:s=>s.teethMeta },
+  { id:"trends",    ic:"📈", nm:"Trends",          meta:()=>"Charts & analytics" },
+  { id:"data",      ic:"🗂️", nm:"Data",            meta:()=>"Export / import" },
+  { id:"settings",  ic:"⚙️", nm:"Settings",        meta:()=>"Targets & display" }
+];
+const TABS = [
+  { id:"home",      ti:"⌂", nm:"Home" },
+  { id:"workouts",  ti:"🏃", nm:"Train" },
+  { id:"hydration", ti:"💧", nm:"Drink" },
+  { id:"trends",    ti:"📈", nm:"Trends" },
+  { id:"settings",  ti:"⚙️", nm:"Settings" }
+];
+
+let CURRENT = "home";
+const SCREEN_DATE = {};   // per-screen selected ISO date
+
+function screenDate(id){ if(!SCREEN_DATE[id]) SCREEN_DATE[id]=todayISO(); return SCREEN_DATE[id]; }
+
+function applySettings(){
+  const st = STATE.settings;
+  document.documentElement.dataset.theme = st.theme;
+  document.documentElement.dataset.large = st.largeText ? "true":"false";
+  document.documentElement.dataset.compact = st.compact ? "true":"false";
+  document.documentElement.style.setProperty("--accent", st.accent);
+  // derive a soft accent
+  document.documentElement.style.setProperty("--accent-soft", hexA(st.accent,0.16));
+  document.querySelector('meta[name=theme-color]').setAttribute("content", st.theme==="dark"?"#000000":"#f2f2f7");
+}
+function hexA(hex,a){
+  const m = hex.replace("#",""); const r=parseInt(m.slice(0,2),16),g=parseInt(m.slice(2,4),16),b=parseInt(m.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function renderTabbar(){
+  $("#tabbar").innerHTML = TABS.map(t =>
+    `<button class="tab ${(CURRENT===t.id || (t.id==="home"&&CURRENT==="home"))?"on":""}" onclick="navigate('${t.id}')">
+       <span class="ti">${t.ti}</span><span>${t.nm}</span>
+     </button>`).join("");
+}
+
+const SCREENS = {};   // id -> {title, render, mount}
+
+function navigate(id, opts={}){
+  if (!SCREENS[id]) id="home";
+  CURRENT = id;
+  document.body.classList.toggle("hydration-active", id==="hydration");
+  const scr = SCREENS[id];
+  $("#topTitle").textContent = id==="home" ? "Daily" : scr.title;
+  $("#backBtn").style.display = id==="home" ? "none" : "inline-flex";
+  $("#screens").innerHTML = `<div class="screen active" id="screen-${id}">${scr.render(opts)}</div>`;
+  renderTabbar();
+  if (scr.mount) scr.mount(opts);
+  window.scrollTo(0,0);
+}
+function goHome(){ navigate("home"); }
+
+/* ---- shared: a date navigator bar for logging screens ---- */
+function dateBar(screenId){
+  const d = screenDate(screenId);
+  return `<div class="card" style="display:flex;align-items:center;gap:8px;padding:10px 12px;">
+    <button class="iconbtn" onclick="shiftDate('${screenId}',-1)">‹</button>
+    <div style="flex:1;text-align:center;">
+      <div style="font-weight:700;">${prettyDate(d)}</div>
+      <input type="date" class="input" style="min-height:34px;padding:4px 8px;margin-top:4px;text-align:center;font-size:.8rem;"
+             value="${d}" max="${todayISO()}" onchange="setDate('${screenId}',this.value)">
+    </div>
+    <button class="iconbtn" onclick="shiftDate('${screenId}',1)" ${d>=todayISO()?"disabled":""}>›</button>
+  </div>`;
+}
+function shiftDate(id,n){ const d=addDays(screenDate(id),n); if(d>todayISO())return; SCREEN_DATE[id]=d; navigate(id); }
+function setDate(id,v){ if(!v)return; if(v>todayISO())v=todayISO(); SCREEN_DATE[id]=v; navigate(id); }
+
+/* ---- shared: bottom sheet ---- */
+function openSheet(html){
+  $("#sheet").innerHTML = `<div class="grab"></div>${html}`;
+  $("#sheetBack").classList.add("open");
+}
+function closeSheet(){ $("#sheetBack").classList.remove("open"); }
+
+/* ---- home screen ---- */
+SCREENS.home = {
+  title:"Daily",
+  render(){
+    const m = homeMetas();
+    return `
+      <div class="screen-date">${new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div>
+      ${homeSnapshot(m)}
+      <div class="home-grid">
+        ${TILES.map(t=>`
+          <button class="tile" onclick="navigate('${t.id}')">
+            ${t.dot?`<span class="badge-dot" style="background:${t.dot}"></span>`:""}
+            <div class="ic">${t.ic}</div>
+            <div>
+              <div class="nm">${t.nm}</div>
+              <div class="meta">${esc(t.meta(m)||"")}</div>
+            </div>
+          </button>`).join("")}
+      </div>`;
+  }
+};
+
+function homeSnapshot(m){
+  return `<div class="card">
+    <div class="grid3" style="text-align:center;">
+      <div><div class="stat-big" style="color:var(--hydration)">${m.hydrationPct}%</div><div class="stat-label">Hydration</div></div>
+      <div><div class="stat-big">${m.todayWorkoutShort}</div><div class="stat-label">Today’s plan</div></div>
+      <div><div class="stat-big">${m.brushDots}</div><div class="stat-label">Brushing</div></div>
+    </div>
+  </div>`;
+}
+
+function homeMetas(){
+  const t = todayISO();
+  // hydration
+  const hy = hydrationSummary(t);
+  const hydrationPct = Math.round(clamp(hy.effective/STATE.settings.hydrationGoalMl*100,0,999));
+  // workout
+  const plan = generateSchedule(28);
+  const todayPlan = plan[0];
+  const todayWorkoutShort = todayPlan.logged
+      ? (todayPlan.status==="Rest Day"?"Rest":(todayPlan.status==="Missed"?"Missed":"Done"))
+      : shortLabel(todayPlan.scheduledType);
+  // nutrition
+  const nut = getNutrition(t);
+  // body
+  const bc = STATE.bodyCompositionLogs.slice().sort(byDateDesc)[0];
+  // teeth
+  const bm = getBrushing(t,"morning"), be = getBrushing(t,"evening");
+  const brushDots = (bm&&bm.done?"●":"○")+(be&&be.done?"●":"○");
+
+  return {
+    hydrationPct,
+    hydrationMeta: `${fmt(hy.effective,0)} / ${STATE.settings.hydrationGoalMl} ml`,
+    todayWorkoutShort,
+    workoutMeta: todayPlan.logged ? "Logged today" : ("Today: "+shortLabel(todayPlan.scheduledType)),
+    nutritionMeta: (nut || drinkSugarKcal(t)>0) ? `${fmt(totalCaloriesFor(t),0)} kcal today` : "Not logged today",
+    bodyMeta: bc ? `${fmt(bc.weight,1)} kg · ${prettyDate(bc.date)}` : "No entries yet",
+    teethMeta: `${(bm&&bm.done)?"✓":"–"} AM · ${(be&&be.done)?"✓":"–"} PM`,
+    brushDots
+  };
+}
+function shortLabel(type){
+  return type.replace("Short Run 1","Short").replace("Short Run 2","Short")
+             .replace("Long Run","Long").replace("Medium Run","Medium")
+             .replace("Rest Day","Rest").replace("Upper 1","Upper 1").replace("Upper 2","Upper 2");
+}
+
+/* =====================================================================
+   WORKOUTS — dashboard, logging, strength tracker, timer
+   ===================================================================== */
+function workoutForDate(d){ return STATE.workoutLogs.find(l=>l.date===d) || null; }
+function strengthForDate(d){ return STATE.strengthLogs.find(s=>s.date===d) || null; }
+function clearWorkout(d){
+  STATE.workoutLogs = STATE.workoutLogs.filter(l=>l.date!==d);
+  STATE.strengthLogs = STATE.strengthLogs.filter(s=>s.date!==d);
+}
+function upsertWorkout(d, fields){
+  clearWorkout(d);
+  const log = Object.assign({ id:uid("wk"), date:d, createdAt:Date.now(), notes:"" }, fields, { updatedAt:Date.now() });
+  STATE.workoutLogs.push(log);
+  return log;
+}
+/* suggested/scheduled type for any date (uses a log's scheduled if present) */
+function suggestedTypeForDate(d){
+  const log = workoutForDate(d);
+  if (log && log.scheduled) return log.scheduled;
+  const tl = buildTimeline();
+  const sv = { lastSR1:null, lastSR2:null };
+  STATE.workoutLogs.forEach(l=>{ if(l.scheduled==="Short Run 1")sv.lastSR1=l.date; if(l.scheduled==="Short Run 2")sv.lastSR2=l.date; });
+  const n = decideDay(tl, d);
+  return toScheduledType(tl, d, n, sv);
+}
+
+/* stopwatches (strength + teeth share this) */
+const SW = {};
+function swEnsure(n){ if(!SW[n]) SW[n]={sec:0,running:false,_i:null}; return SW[n]; }
+function swToggle(name, dispId, btnId){
+  const sw=swEnsure(name);
+  if (sw.running){ clearInterval(sw._i); sw.running=false; }
+  else { sw.running=true; sw._i=setInterval(()=>{ sw.sec++; const el=document.getElementById(dispId); if(el)el.textContent=mmss(sw.sec); }, 1000); }
+  const b=document.getElementById(btnId); if(b) b.textContent = sw.running?"⏸ Pause":"▶ Start";
+}
+function swReset(name, dispId, btnId){ const sw=swEnsure(name); clearInterval(sw._i); sw.sec=0; sw.running=false;
+  const el=document.getElementById(dispId); if(el)el.textContent=mmss(0); const b=document.getElementById(btnId); if(b)b.textContent="▶ Start"; }
+function swSet(name,sec){ const sw=swEnsure(name); clearInterval(sw._i); sw.running=false; sw.sec=sec; }
+function timerWidget(name, label){
+  const sw=swEnsure(name); const disp="swdisp_"+name, btn="swbtn_"+name;
+  return `<div class="timer">
+    <div class="tdisp" id="${disp}">${mmss(sw.sec)}</div>
+    <button class="btn sm" id="${btn}" onclick="swToggle('${name}','${disp}','${btn}')">${sw.running?"⏸ Pause":"▶ Start"}</button>
+    <button class="btn sm ghost" onclick="swReset('${name}','${disp}','${btn}')">Reset</button>
+  </div>`;
+}
+
+SCREENS.workouts = {
+  title:"Workouts",
+  render(){
+    const plan = generateSchedule(28);
+    const today = plan[0];
+    return `
+      ${todayWorkoutCard(today)}
+      ${runTargetsCard()}
+      ${scheduleCard(plan)}
+      ${recentWorkoutsCard()}
+      <button class="btn primary full" style="margin-bottom:14px" onclick="chooseWorkout('${todayISO()}', true)">＋ Log an unscheduled workout</button>
+    `;
+  }
+};
+
+function todayWorkoutCard(t){
+  if (t.logged){
+    const l=t.log;
+    let detail="";
+    if (l.status==="Rest Day") detail="Rest day logged.";
+    else if (l.status==="Missed") detail="Marked as missed.";
+    else {
+      const c=categoryLabel(l.actual);
+      if (norm(l.actual)==="Long") detail=`${c} · ${fmt(l.actualDistance)} ${STATE.settings.units.distance} · ${fmt(l.actualRun)}/${fmt(l.actualWalk)} min`;
+      else if (isRunNorm(norm(l.actual))) detail=`${c} · ${fmt(l.actualDistance)} ${STATE.settings.units.distance}`;
+      else detail=`${c}${l.durationSec?` · ${mmss(l.durationSec)}`:""}`;
+    }
+    return `<div class="card">
+      <div class="row spread"><h3>Today</h3><span class="pill ${l.status==="Missed"?"bad":l.status==="Rest Day"?"neutral":"good"}">${l.status}</span></div>
+      <div class="stat-big" style="margin:4px 0">${shortLabel(l.scheduled||categoryLabel(l.actual))}</div>
+      <div class="muted" style="font-size:.88rem">${esc(detail)}</div>
+      ${l.notes?`<div class="muted" style="font-size:.84rem;margin-top:8px">📝 ${esc(l.notes)}</div>`:""}
+      <div class="btn-row" style="margin-top:14px">
+        <button class="btn sm" onclick="chooseWorkout('${todayISO()}', false)">Change</button>
+        <button class="btn sm bad ghost" onclick="undoWorkout('${todayISO()}')">Clear</button>
+      </div>
+    </div>`;
+  }
+  const n = norm(t.scheduledType);
+  const icon = isRunNorm(n)?"🏃":isStrengthNorm(n)?"🏋️":"😴";
+  return `<div class="card">
+    <div class="row spread"><h3>Today’s workout</h3><span class="chip">${prettyDate(t.date)}</span></div>
+    <div class="row" style="gap:14px;align-items:center;margin:6px 0 4px">
+      <div style="font-size:2.4rem">${icon}</div>
+      <div><div class="stat-big">${shortLabel(t.scheduledType)}</div>
+      <div class="muted" style="font-size:.85rem">${workoutBlurb(n)}</div></div>
+    </div>
+    <div class="btn-row" style="margin-top:14px">
+      <button class="btn good" onclick="startComplete('${t.date}','${esc(t.scheduledType)}')">✓ Complete</button>
+      <button class="btn" onclick="markRest('${t.date}')">😴 Rest</button>
+    </div>
+    <div class="btn-row" style="margin-top:10px">
+      <button class="btn sm ghost" onclick="markMissed('${t.date}')">Missed</button>
+      <button class="btn sm ghost" onclick="chooseWorkout('${t.date}', false)">Replace</button>
+    </div>
+  </div>`;
+}
+function workoutBlurb(n){
+  if(n==="Long") return "Interval run — the week’s key session";
+  if(n==="Medium") return "Steady distance run";
+  if(n==="Short") return "Easy short run";
+  if(n==="Legs") return "Lower-body strength";
+  if(n==="Upper1"||n==="Upper2") return "Upper-body strength";
+  return "Recovery — take the day off";
+}
+
+function runTargetsCard(){
+  const lt = nextLongTargets();
+  const mt = mediumTarget(), st = shortTarget();
+  const u = STATE.settings.units.distance;
+  return `<div class="card">
+    <h3>Running targets</h3>
+    <div class="kv"><span class="k">Next Long Run</span><span class="v">${fmt(lt.run)} min run / ${fmt(lt.walk)} min walk${lt.first?" · first run":""}</span></div>
+    <div class="kv"><span class="k">Next Medium Run</span><span class="v">${mt!=null?`${fmt(mt)} ${u}`:"Complete a Long Run first"}</span></div>
+    <div class="kv"><span class="k">Next Short Run</span><span class="v">${st!=null?`${fmt(st)} ${u}`:"Complete a Long Run first"}</span></div>
+  </div>`;
+}
+
+function scheduleCard(plan){
+  const strip = plan.slice(0,28).map(p=>{
+    const lab = p.logged ? (p.status==="Rest Day"?"Rest":p.status==="Missed"?"Miss":shortLabel(categoryLabel(p.log.actual)||"")) : shortLabel(p.scheduledType);
+    const cls = p.logged && p.status!=="Rest Day" && p.status!=="Missed" ? "" :
+                isRunNorm(norm(p.scheduledType))?"wk-type-run":isStrengthNorm(norm(p.scheduledType))?"wk-type-str":"wk-type-rest";
+    return `<div class="cal-day ${p.date===todayISO()?"today":""}">
+      <div class="cd-dow">${dow(p.date)}</div><div class="cd-num">${dnum(p.date)}</div>
+      <div class="cd-w ${cls}">${lab||"–"}</div>
+    </div>`;
+  }).join("");
+  return `<div class="card">
+    <h3>Next 28 days</h3>
+    <div class="cal-strip">${strip}</div>
+    <div class="hint" style="margin-top:8px">Logging a workout, rest or miss instantly reshuffles the plan.</div>
+  </div>`;
+}
+
+function recentWorkoutsCard(){
+  const done = STATE.workoutLogs.filter(l=>l.status==="Completed"||l.status==="Unscheduled").sort(byDateDesc).slice(0,8);
+  return `<div class="card flush">
+    <div style="padding:14px 16px 4px"><h3 style="margin:0">Recent workouts</h3></div>
+    ${done.length? done.map(l=>{
+      const n=norm(l.actual); const ic=isRunNorm(n)?"🏃":"🏋️";
+      let sub = isRunNorm(n) ? `${fmt(l.actualDistance)} ${STATE.settings.units.distance}` : (l.durationSec?mmss(l.durationSec):"logged");
+      return `<div class="list-item">
+        <div class="li-ic">${ic}</div>
+        <div class="li-main"><div class="li-title">${esc(categoryLabel(l.actual))}</div>
+          <div class="li-sub">${prettyDate(l.date)} · ${esc(sub)}${l.status==="Unscheduled"?" · unscheduled":""}</div></div>
+        <div class="li-actions"><button class="iconbtn" onclick="undoWorkout('${l.date}')">🗑️</button></div>
+      </div>`;
+    }).join("") : `<div class="empty"><span class="big">🗓️</span>No workouts logged yet.</div>`}
+  </div>`;
+}
+
+/* ---- actions ---- */
+function undoWorkout(d){ clearWorkout(d); save(); toast("Cleared"); navigate("workouts"); }
+function markRest(d){ upsertWorkout(d,{scheduled:suggestedTypeForDate(d),actual:null,category:"Rest Day",status:"Rest Day"}); save(); toast("Rest day logged"); navigate("workouts"); }
+function markMissed(d){ upsertWorkout(d,{scheduled:suggestedTypeForDate(d),actual:null,category:"Missed Workout",status:"Missed"}); save(); toast("Marked missed"); navigate("workouts"); }
+
+function startComplete(d, scheduledType){
+  const n = norm(scheduledType);
+  if (isRunNorm(n)) openRunSheet(d, scheduledType, false);
+  else if (isStrengthNorm(n)) openStrengthSheet(d, scheduledType, false);
+  else markRest(d);
+}
+function chooseWorkout(d, unscheduled){
+  const opts = [
+    ["Long Run","🏃"],["Medium Run","🏃"],["Short Run","🏃"],
+    ["Legs","🏋️"],["Upper 1","🏋️"],["Upper 2","🏋️"],
+    ["Rest Day","😴"],["Missed Workout","✕"]
+  ];
+  openSheet(`<h3>${unscheduled?"Log a workout":"Choose workout"}</h3>
+    <div class="grid2">${opts.map(([t,ic])=>`
+      <button class="btn" style="justify-content:flex-start" onclick="pickWorkout('${d}','${t}',${unscheduled})">${ic} ${t}</button>`).join("")}
+    </div>`);
+}
+function pickWorkout(d, type, unscheduled){
+  closeSheet();
+  const n=norm(type);
+  if (type==="Rest Day") return markRest(d);
+  if (type==="Missed Workout") return markMissed(d);
+  if (isRunNorm(n)) return openRunSheet(d, type, unscheduled);
+  if (isStrengthNorm(n)) return openStrengthSheet(d, type, unscheduled);
+}
+
+/* ---- run logging sheet ---- */
+function openRunSheet(d, type, unscheduled){
+  const n = norm(type);
+  const u = STATE.settings.units.distance;
+  const existing = workoutForDate(d);
+  let body = `<h3>${type.replace(/ 1| 2/,"")} — ${prettyDate(d)}</h3>`;
+  if (n==="Long"){
+    const lt = nextLongTargets();
+    body += `<div class="tgt-box"><div class="tgt-lab">Target intervals</div>
+      <div class="tgt-val">${fmt(lt.run)} min run · ${fmt(lt.walk)} min walk</div></div>
+      <div class="grid2">
+        <label class="field"><span>Actual run interval (min)</span><input class="input" id="r_run" type="number" step="0.1" value="${existing&&existing.actualRun!=null?existing.actualRun:fmt(lt.run)}"></label>
+        <label class="field"><span>Actual walk interval (min)</span><input class="input" id="r_walk" type="number" step="0.1" value="${existing&&existing.actualWalk!=null?existing.actualWalk:fmt(lt.walk)}"></label>
+      </div>
+      <label class="field"><span>Total distance (${u})</span><input class="input" id="r_dist" type="number" step="0.01" value="${existing&&existing.actualDistance!=null?existing.actualDistance:""}" placeholder="e.g. 5.2"></label>`;
+  } else {
+    const tgt = n==="Medium"?mediumTarget():shortTarget();
+    body += tgt!=null
+      ? `<div class="tgt-box"><div class="tgt-lab">Target distance (${n==="Medium"?"50%":"25%"} of last Long)</div><div class="tgt-val">${fmt(tgt)} ${u}</div></div>`
+      : `<div class="warnbox">Complete a Long Run first to set a target distance.</div>`;
+    body += `<label class="field"><span>Actual distance (${u})</span><input class="input" id="r_dist" type="number" step="0.01" value="${existing&&existing.actualDistance!=null?existing.actualDistance:""}" placeholder="distance covered"></label>`;
+  }
+  body += `<label class="field"><span>Notes (optional)</span><textarea class="input" id="r_notes" placeholder="How did it feel?">${existing?esc(existing.notes||""):""}</textarea></label>
+    <button class="btn primary full" onclick="saveRun('${d}','${type}',${unscheduled})">Save run</button>`;
+  openSheet(body);
+}
+function saveRun(d, type, unscheduled){
+  const n=norm(type);
+  const lt = nextLongTargets();
+  const f = { scheduled: suggestedTypeForDate(d), actual: categoryLabel(type), category: categoryLabel(type),
+              status: unscheduled?"Unscheduled":"Completed",
+              actualDistance: num($("#r_dist")?.value, null),
+              notes: ($("#r_notes")?.value||"").trim() };
+  if (n==="Long"){
+    f.targetRun=lt.run; f.targetWalk=lt.walk;
+    f.actualRun=num($("#r_run").value, lt.run); f.actualWalk=num($("#r_walk").value, lt.walk);
+  } else { f.targetDistance = n==="Medium"?mediumTarget():shortTarget(); }
+  // a logged run counts as "Completed" if it matches the day's suggestion, else stays as chosen status
+  upsertWorkout(d, f); save(); closeSheet(); toast("Run logged"); navigate("workouts");
+}
+
+/* ---- strength logging sheet ---- */
+let EDIT_STR = null;
+function prevSetsFor(name, beforeDate){
+  const key=name.trim().toLowerCase(); if(!key) return null;
+  const cands = STATE.strengthLogs.filter(s=>s.date<beforeDate).sort(byDateDesc);
+  for (const s of cands){ const ex=(s.exercises||[]).find(e=>e.name.trim().toLowerCase()===key); if(ex) return ex.sets; }
+  return null;
+}
+function openStrengthSheet(d, type, unscheduled){
+  const existing = strengthForDate(d);
+  if (existing && norm(workoutForDate(d)?.actual)===norm(type)){
+    EDIT_STR = JSON.parse(JSON.stringify({ date:d, type, unscheduled, exercises:existing.exercises, notes:existing.notes||"" }));
+  } else {
+    EDIT_STR = { date:d, type, unscheduled, exercises:[{name:"",sets:[{kg:"",reps:"",done:false}]}], notes:"" };
+    swReset("strength","swdisp_strength","swbtn_strength");
+  }
+  renderStrengthSheet();
+}
+function renderStrengthSheet(){
+  const e=EDIT_STR;
+  const exHtml = e.exercises.map((ex,xi)=>{
+    const prev = prevSetsFor(ex.name, e.date);
+    const rows = ex.sets.map((set,si)=>{
+      const p = prev&&prev[si] ? `${fmt(prev[si].kg)}×${fmt(prev[si].reps)}` : "–";
+      return `<tr>
+        <td class="setn">${si+1}</td>
+        <td class="prev">${p}</td>
+        <td><input type="number" step="0.5" inputmode="decimal" value="${esc(set.kg)}" onchange="strSet(${xi},${si},'kg',this.value)"></td>
+        <td><input type="number" step="1" inputmode="numeric" value="${esc(set.reps)}" onchange="strSet(${xi},${si},'reps',this.value)"></td>
+        <td class="donecell"><button class="setdone ${set.done?"on":""}" onclick="strSet(${xi},${si},'done',${!set.done})">${set.done?"✓":""}</button></td>
+        <td><button class="del-set" onclick="strDelSet(${xi},${si})">×</button></td>
+      </tr>`;
+    }).join("");
+    return `<div class="ex-block">
+      <div class="ex-head">
+        <input placeholder="Exercise name" value="${esc(ex.name)}" onchange="strName(${xi},this.value)">
+        <button class="iconbtn" title="Duplicate" onclick="strDupEx(${xi})">⧉</button>
+        <button class="iconbtn" title="Remove" onclick="strDelEx(${xi})">🗑️</button>
+      </div>
+      <table class="set-table"><thead><tr>
+        <th>Set</th><th>Prev</th><th>kg</th><th>reps</th><th>✓</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <button class="btn tiny ghost" style="margin-top:8px" onclick="strAddSet(${xi})">＋ Add set</button>
+    </div>`;
+  }).join("");
+  openSheet(`<h3>${e.type} — ${prettyDate(e.date)}</h3>
+    ${timerWidget("strength","Workout timer")}
+    <div style="height:12px"></div>
+    ${exHtml}
+    <div class="btn-row">
+      <button class="btn sm" onclick="strAddEx()">＋ Add exercise</button>
+    </div>
+    <label class="field" style="margin-top:14px"><span>Session notes</span><textarea class="input" id="str_notes" placeholder="Optional" onchange="EDIT_STR.notes=this.value">${esc(e.notes)}</textarea></label>
+    <button class="btn primary full" onclick="saveStrength()">Save workout</button>`);
+}
+function strSet(xi,si,key,val){ if(key==="done")EDIT_STR.exercises[xi].sets[si].done=val; else EDIT_STR.exercises[xi].sets[si][key]=val; if(key==="done")renderStrengthSheet(); }
+function strName(xi,val){ EDIT_STR.exercises[xi].name=val; renderStrengthSheet(); }
+function strAddSet(xi){ const sets=EDIT_STR.exercises[xi].sets; const last=sets[sets.length-1]||{kg:"",reps:""}; sets.push({kg:last.kg,reps:last.reps,done:false}); renderStrengthSheet(); }
+function strDelSet(xi,si){ EDIT_STR.exercises[xi].sets.splice(si,1); if(!EDIT_STR.exercises[xi].sets.length)EDIT_STR.exercises[xi].sets.push({kg:"",reps:"",done:false}); renderStrengthSheet(); }
+function strAddEx(){ EDIT_STR.exercises.push({name:"",sets:[{kg:"",reps:"",done:false}]}); renderStrengthSheet(); }
+function strDelEx(xi){ EDIT_STR.exercises.splice(xi,1); if(!EDIT_STR.exercises.length)EDIT_STR.exercises.push({name:"",sets:[{kg:"",reps:"",done:false}]}); renderStrengthSheet(); }
+function strDupEx(xi){ EDIT_STR.exercises.splice(xi+1,0,JSON.parse(JSON.stringify(EDIT_STR.exercises[xi]))); renderStrengthSheet(); }
+function saveStrength(){
+  const e=EDIT_STR;
+  const exercises = e.exercises
+    .map(ex=>({ name:ex.name.trim(), sets:ex.sets.map(s=>({kg:num(s.kg,null),reps:num(s.reps,null),done:!!s.done})) }))
+    .filter(ex=>ex.name);
+  const dur = swEnsure("strength").sec;
+  upsertWorkout(e.date,{ scheduled:suggestedTypeForDate(e.date), actual:e.type, category:categoryLabel(e.type),
+    status: e.unscheduled?"Unscheduled":"Completed", durationSec:dur, notes:e.notes });
+  const wk = workoutForDate(e.date);
+  STATE.strengthLogs.push({ id:uid("str"), date:e.date, workoutLogId:wk.id, workoutType:e.type, exercises, notes:e.notes, durationSec:dur, createdAt:Date.now() });
+  swReset("strength","swdisp_strength","swbtn_strength");
+  save(); closeSheet(); toast("Workout saved"); navigate("workouts");
+}
+
+/* =====================================================================
+   SECTION 2 — HYDRATION
+   ===================================================================== */
+/* Common serving presets (ml). "Default" uses each drink's own size. */
+const SERVINGS = [
+  { nm:"Small", ml:150 }, { nm:"Cup", ml:200 }, { nm:"Glass", ml:250 },
+  { nm:"Mug", ml:300 }, { nm:"Can", ml:330 }, { nm:"Bottle", ml:500 },
+  { nm:"Pint", ml:568 }, { nm:"Shot", ml:30 }
+];
+const DRINK_CATEGORIES = [
+  "Water","Coffee","Tea & cocoa","Juices","Soda",
+  "Sport & wellness","Milk & alternatives","Alcohol","Soups / hidden drinks","Other"
+];
+
+/* UK alcohol units = ml × ABV% / 1000 */
+function alcoholUnitsFor(ml, abvPct){ return (num(ml) * num(abvPct)) / 1000; }
+
+/* Build a hydration log entry from a drink + actual ml (scales caffeine/sugar/alcohol). */
+function makeHydrationEntry(drink, ml, date){
+  const scale = drink.defaultMl ? (ml / drink.defaultMl) : 1;
+  return {
+    id: uid("hyd"), date, source:"hydration", createdAt: Date.now(), updatedAt: Date.now(),
+    drinkId: drink.id, name: drink.name, category: drink.category, icon: drink.icon,
+    ml: round(ml,0), hydrationPct: drink.hydrationPct,
+    caffeineMg: round(num(drink.caffeine) * scale, 1),
+    sugarG: round(num(drink.sugar) * scale, 1),
+    alcoholPct: num(drink.alcoholPct),
+    alcoholUnits: round(alcoholUnitsFor(ml, drink.alcoholPct), 2)
+  };
+}
+
+/* Daily hydration roll-up (referenced by home + trends). */
+function hydrationSummary(date){
+  const logs = STATE.hydrationLogs.filter(l => l.date === date);
+  let fluid=0, effective=0, caffeine=0, sugar=0, alcoholUnits=0;
+  logs.forEach(l => {
+    fluid       += num(l.ml);
+    effective   += num(l.ml) * num(l.hydrationPct) / 100;
+    caffeine    += num(l.caffeineMg);
+    sugar       += num(l.sugarG);
+    alcoholUnits+= num(l.alcoholUnits);
+  });
+  const goal = STATE.settings.hydrationGoalMl;
+  return {
+    logs: logs.slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)),
+    fluid, effective, caffeine, sugar, alcoholUnits, goal,
+    pct: goal ? (effective/goal*100) : 0,
+    met: effective >= goal
+  };
+}
+
+let HYDR_CAT = "Water";   // currently selected drink category tab
+
+function setWaterFill(pct){
+  const el = document.getElementById("waterFill");
+  if (el) el.style.height = clamp(pct,0,100) + "%";
+}
+
+SCREENS.hydration = {
+  title: "Hydration",
+  render(){
+    const d  = screenDate("hydration");
+    const hy = hydrationSummary(d);
+    const pct = Math.round(clamp(hy.pct,0,999));
+    const cats = DRINK_CATEGORIES.filter(c => STATE.drinkDatabase.some(dr => dr.category===c));
+    if (!cats.includes(HYDR_CAT)) HYDR_CAT = cats[0] || "Water";
+    const drinks = STATE.drinkDatabase.filter(dr => dr.category === HYDR_CAT);
+
+    return `
+      ${dateBar("hydration")}
+
+      <div class="card" style="text-align:center;">
+        <div class="stat-big" style="color:var(--hydration);font-size:2.6rem;">${pct}%</div>
+        <div class="stat-label">${fmt(hy.effective,0)} / ${hy.goal} ml effective hydration</div>
+        <div class="bar" style="margin-top:12px;"><i style="width:${clamp(hy.pct,0,100)}%;background:var(--hydration);"></i></div>
+        <div class="chips" style="justify-content:center;margin-top:14px;">
+          <span class="chip blue">💧 ${fmt(hy.fluid,0)} ml fluid</span>
+          <span class="chip orange">☕ ${fmt(hy.caffeine,0)} mg</span>
+          <span class="chip pink">🍬 ${fmt(hy.sugar,1)} g</span>
+          ${hy.alcoholUnits>0?`<span class="chip red">🍷 ${fmt(hy.alcoholUnits,1)} units</span>`:""}
+        </div>
+        ${hy.met?`<div style="margin-top:12px;"><span class="pill good">Goal met 🎉</span></div>`:""}
+      </div>
+
+      <div class="cat-tabs">
+        ${cats.map(c=>`<button class="cat-tab ${c===HYDR_CAT?"on":""}" onclick="pickHydrCat('${esc(c)}')">${esc(c)}</button>`).join("")}
+      </div>
+
+      <div class="drink-grid">
+        ${drinks.map(dr=>`
+          <button class="drink-card" onclick="openDrinkSheet('${dr.id}')">
+            <div class="dk-ic">${dr.icon||"🥤"}</div>
+            <div class="dk-nm">${esc(dr.name)}</div>
+            <div class="dk-stats">
+              <span class="dk-h">${dr.hydrationPct}%</span>
+              ${dr.caffeine?`<span class="dk-c">${dr.caffeine}mg</span>`:""}
+              ${dr.sugar?`<span class="dk-s">${dr.sugar}g</span>`:""}
+              ${dr.alcoholPct?`<span class="dk-a">${dr.alcoholPct}%</span>`:""}
+            </div>
+          </button>`).join("")}
+      </div>
+
+      <div class="btn-row" style="margin:14px 0;">
+        <button class="btn sm ghost" onclick="openCustomDrinkSheet()">＋ Add custom drink</button>
+      </div>
+
+      <h3 class="section-h">Logged ${d===todayISO()?"today":"this day"}</h3>
+      <div class="card flush">
+        ${hy.logs.length ? hy.logs.map(l=>`
+          <div class="list-item">
+            <div class="li-ic">${l.icon||"🥤"}</div>
+            <div class="li-main">
+              <div class="li-title">${esc(l.name)}</div>
+              <div class="li-sub">${fmt(l.ml,0)} ml · ${l.hydrationPct}%${l.caffeineMg?` · ${fmt(l.caffeineMg,0)}mg`:""}${l.sugarG?` · ${fmt(l.sugarG,1)}g`:""}${l.alcoholUnits?` · ${fmt(l.alcoholUnits,1)}u`:""}</div>
+            </div>
+            <div class="li-actions">
+              <button class="iconbtn" onclick="editHydration('${l.id}')">✎</button>
+              <button class="iconbtn" onclick="deleteHydration('${l.id}')">🗑️</button>
+            </div>
+          </div>`).join("")
+          : `<div class="empty"><span class="big">💧</span>No drinks logged yet.</div>`}
+      </div>
+    `;
+  },
+  mount(){
+    setWaterFill(hydrationSummary(screenDate("hydration")).pct);
+  }
+};
+
+function pickHydrCat(c){ HYDR_CAT = c; navigate("hydration"); }
+
+let DRINK_PICK = null;   // { drink, ml }
+
+function openDrinkSheet(drinkId){
+  const drink = STATE.drinkDatabase.find(x=>x.id===drinkId);
+  if (!drink) return;
+  DRINK_PICK = { drink, ml: drink.defaultMl };
+  renderDrinkSheet();
+}
+function setServing(ml){ DRINK_PICK.ml = ml; renderDrinkSheet(); }
+function setCustomMl(v){ const n=num(v,0); if(n>0) DRINK_PICK.ml=n; renderDrinkSheet(); }
+function renderDrinkSheet(){
+  const { drink, ml } = DRINK_PICK;
+  const preview = makeHydrationEntry(drink, ml, screenDate("hydration"));
+  const effective = ml * drink.hydrationPct / 100;
+  const presets = [{nm:"Default",ml:drink.defaultMl}, ...SERVINGS];
+  openSheet(`
+    <h3>${drink.icon||"🥤"} ${esc(drink.name)}</h3>
+    <div class="serv-grid">
+      ${presets.map(s=>`<button class="${Math.round(s.ml)===Math.round(ml)?"on":""}" onclick="setServing(${s.ml})">${s.nm}<small>${s.ml} ml</small></button>`).join("")}
+    </div>
+    <label class="field" style="margin-top:14px;"><span>Exact amount</span>
+      <div class="input-unit"><input class="input" type="number" inputmode="numeric" value="${Math.round(ml)}" onchange="setCustomMl(this.value)"><span class="u">ml</span></div>
+    </label>
+    <div class="card" style="background:var(--card-2);">
+      <div class="kv"><span class="k">Effective hydration</span><span class="v" style="color:var(--hydration)">${fmt(effective,0)} ml</span></div>
+      ${preview.caffeineMg?`<div class="kv"><span class="k">Caffeine</span><span class="v" style="color:var(--caffeine)">${fmt(preview.caffeineMg,0)} mg</span></div>`:""}
+      ${preview.sugarG?`<div class="kv"><span class="k">Sugar</span><span class="v" style="color:var(--sugar)">${fmt(preview.sugarG,1)} g</span></div>`:""}
+      ${preview.alcoholUnits?`<div class="kv"><span class="k">Alcohol</span><span class="v" style="color:var(--alcohol)">${fmt(preview.alcoholUnits,1)} units</span></div>`:""}
+    </div>
+    <button class="btn primary full" onclick="logDrink()">Log drink</button>
+  `);
+}
+function logDrink(){
+  const { drink, ml } = DRINK_PICK;
+  STATE.hydrationLogs.push(makeHydrationEntry(drink, ml, screenDate("hydration")));
+  save(); closeSheet(); toast("Drink logged"); navigate("hydration");
+}
+
+let EDIT_HYD = null;
+function editHydration(id){
+  const l = STATE.hydrationLogs.find(x=>x.id===id); if(!l) return;
+  EDIT_HYD = l;
+  openSheet(`
+    <h3>Edit ${esc(l.name)}</h3>
+    <label class="field"><span>Amount</span>
+      <div class="input-unit"><input class="input" id="eh_ml" type="number" inputmode="numeric" value="${Math.round(l.ml)}"><span class="u">ml</span></div>
+    </label>
+    <p class="hint">Hydration ${l.hydrationPct}% · caffeine, sugar and alcohol scale with the amount.</p>
+    <button class="btn primary full" onclick="saveHydrationEdit()">Save</button>
+    <button class="btn full ghost" onclick="closeSheet()">Cancel</button>
+  `);
+}
+function saveHydrationEdit(){
+  const l = EDIT_HYD; if(!l) return;
+  const newMl = num($("#eh_ml").value, l.ml);
+  const oldMl = l.ml || 1;
+  const factor = newMl / oldMl;
+  l.caffeineMg   = round(num(l.caffeineMg)*factor,1);
+  l.sugarG       = round(num(l.sugarG)*factor,1);
+  l.alcoholUnits = round(alcoholUnitsFor(newMl, l.alcoholPct),2);
+  l.ml = round(newMl,0);
+  l.updatedAt = Date.now();
+  save(); closeSheet(); toast("Updated"); navigate("hydration");
+}
+function deleteHydration(id){
+  STATE.hydrationLogs = STATE.hydrationLogs.filter(x=>x.id!==id);
+  save(); toast("Deleted"); navigate("hydration");
+}
+
+/* Add / edit a drink in the database. */
+function openCustomDrinkSheet(existingId){
+  const ex = existingId ? STATE.drinkDatabase.find(x=>x.id===existingId) : null;
+  openSheet(`
+    <h3>${ex?"Edit drink":"New custom drink"}</h3>
+    <label class="field"><span>Name</span><input class="input" id="cd_name" value="${ex?esc(ex.name):""}" placeholder="e.g. Builder's tea"></label>
+    <label class="field"><span>Category</span>
+      <select class="input" id="cd_cat">${DRINK_CATEGORIES.map(c=>`<option ${ex&&ex.category===c?"selected":""}>${c}</option>`).join("")}</select>
+    </label>
+    <div class="grid2">
+      <label class="field"><span>Hydration %</span><input class="input" id="cd_hyd" type="number" value="${ex?ex.hydrationPct:90}"></label>
+      <label class="field"><span>Default size (ml)</span><input class="input" id="cd_ml" type="number" value="${ex?ex.defaultMl:250}"></label>
+    </div>
+    <div class="grid2">
+      <label class="field"><span>Caffeine (mg)</span><input class="input" id="cd_caf" type="number" value="${ex?ex.caffeine:0}"></label>
+      <label class="field"><span>Sugar (g)</span><input class="input" id="cd_sug" type="number" value="${ex?ex.sugar:0}"></label>
+    </div>
+    <div class="grid2">
+      <label class="field"><span>Alcohol % ABV</span><input class="input" id="cd_alc" type="number" value="${ex?ex.alcoholPct:0}"></label>
+      <label class="field"><span>Icon / emoji</span><input class="input" id="cd_ic" value="${ex?esc(ex.icon):"🥤"}" maxlength="3"></label>
+    </div>
+    <button class="btn primary full" onclick="saveCustomDrink(${ex?`'${ex.id}'`:"null"})">Save drink</button>
+  `);
+}
+function saveCustomDrink(id){
+  const name = $("#cd_name").value.trim();
+  if(!name){ toast("Name required"); return; }
+  const data = {
+    name,
+    category: $("#cd_cat").value,
+    hydrationPct: num($("#cd_hyd").value,90),
+    defaultMl: num($("#cd_ml").value,250),
+    caffeine: num($("#cd_caf").value,0),
+    sugar: num($("#cd_sug").value,0),
+    alcoholPct: num($("#cd_alc").value,0),
+    icon: $("#cd_ic").value.trim()||"🥤",
+    unit: "glass"
+  };
+  if(id){ const dr=STATE.drinkDatabase.find(x=>x.id===id); Object.assign(dr,data); }
+  else { STATE.drinkDatabase.push(Object.assign({id:uid("drk")}, data)); HYDR_CAT = data.category; }
+  save(); closeSheet(); toast("Drink saved");
+  navigate(CURRENT==="settings"?"settings":"hydration");
+}
+function deleteDrink(id){
+  STATE.drinkDatabase = STATE.drinkDatabase.filter(x=>x.id!==id);
+  save(); toast("Drink removed");
+  if (CURRENT==="settings") navigate("settings");
+}
+
+/* =====================================================================
+   SECTION 3 — NUTRITION  (one manual total per day)
+   ===================================================================== */
+const NUTRIENTS = [
+  { key:"calories", lab:"Calories",      unit:"kcal", limit:true  },
+  { key:"protein",  lab:"Protein",       unit:"g",    limit:false },
+  { key:"carbs",    lab:"Carbs",         unit:"g",    limit:true  },
+  { key:"fat",      lab:"Fat",           unit:"g",    limit:true  },
+  { key:"satFat",   lab:"Saturated fat", unit:"g",    limit:true  },
+  { key:"sugar",    lab:"Sugar",         unit:"g",    limit:true  },
+  { key:"fibre",    lab:"Fibre",         unit:"g",    limit:false },
+  { key:"salt",     lab:"Salt",          unit:"g",    limit:true  }
+];
+
+function getNutrition(date){ return STATE.nutritionLogs.find(l => l.date === date) || null; }
+
+/* Sugar is a carbohydrate: ~4 kcal per gram. Drinks logged in Hydration carry
+   their sugar, so those calories are folded into the day's calorie total. */
+const SUGAR_KCAL_PER_G = 4;
+function drinkSugarKcal(date){ return round(hydrationSummary(date).sugar * SUGAR_KCAL_PER_G, 0); }
+/* Day's calories = manually-logged food calories + calories from drink sugar. */
+function totalCaloriesFor(date){
+  const log = getNutrition(date);
+  const food = log && log.calories!=null ? num(log.calories) : 0;
+  return food + drinkSugarKcal(date);
+}
+
+function nutritionAverages(days){
+  const cutoff = addDays(todayISO(), -(days-1));
+  const recent = STATE.nutritionLogs.filter(l => l.date >= cutoff && l.date <= todayISO());
+  if (!recent.length) return null;
+  const avg = {};
+  NUTRIENTS.forEach(n => {
+    avg[n.key] = n.key==="calories"
+      ? recent.reduce((s,l)=>s+totalCaloriesFor(l.date),0) / recent.length
+      : recent.reduce((s,l)=>s+num(l[n.key]),0) / recent.length;
+  });
+  avg._count = recent.length;
+  return avg;
+}
+
+SCREENS.nutrition = {
+  title: "Nutrition",
+  render(){
+    const d = screenDate("nutrition");
+    const log = getNutrition(d);
+    const tg = STATE.settings.nutritionTargets;
+    const avg = nutritionAverages(7);
+    const drinkKcal = drinkSugarKcal(d);
+    const hasAny = !!log || drinkKcal>0;
+
+    const rows = NUTRIENTS.map(n => {
+      const isCal = n.key==="calories";
+      const val = isCal ? totalCaloriesFor(d) : (log ? num(log[n.key]) : 0);
+      const has = isCal ? hasAny : !!log;
+      const target = num(tg[n.key]);
+      const pct = target ? clamp(val/target*100,0,100) : 0;
+      let cls = "neutral", barCol = "var(--accent)";
+      if (has && target){
+        if (n.limit){ cls = val>target ? "bad" : "good"; barCol = val>target?"var(--bad)":"var(--good)"; }
+        else { cls = val>=target ? "good" : "warn"; barCol = val>=target?"var(--good)":"var(--warn)"; }
+      }
+      const sub = isCal && drinkKcal>0
+        ? `<div class="muted" style="font-size:12px;margin-top:3px;">incl. ${fmt(drinkKcal,0)} kcal from drink sugar</div>` : "";
+      return `<div style="margin-bottom:13px;">
+        <div class="row spread" style="margin-bottom:5px;">
+          <span style="font-weight:600;">${n.lab}</span>
+          <span style="font-variant-numeric:tabular-nums;">${fmt(val, isCal?0:1)}${target?` <span class="muted">/ ${fmt(target,0)} ${n.unit}</span>`:` ${n.unit}`}
+            ${has&&target?`<span class="pill ${cls}" style="margin-left:6px;">${n.limit?(val>target?"Over":"OK"):(val>=target?"Met":"Under")}</span>`:""}</span>
+        </div>
+        <div class="bar"><i style="width:${pct}%;background:${barCol};"></i></div>
+        ${sub}
+      </div>`;
+    }).join("");
+
+    return `
+      ${dateBar("nutrition")}
+      <div class="card">
+        <div class="row spread"><h3>${d===todayISO()?"Today’s":"Daily"} totals</h3>
+          <button class="btn sm primary" onclick="openNutritionSheet()">${log?"Edit":"Log totals"}</button></div>
+        ${hasAny ? rows : `<div class="empty"><span class="big">🍽️</span>No nutrition logged for this day.</div>`}
+        ${log&&log.notes?`<p class="hint" style="margin-top:6px;">📝 ${esc(log.notes)}</p>`:""}
+      </div>
+
+      <h3 class="section-h">7-day averages</h3>
+      <div class="card">
+        ${avg ? NUTRIENTS.map(n=>`
+          <div class="kv"><span class="k">${n.lab}</span><span class="v">${fmt(avg[n.key], n.key==="calories"?0:1)} ${n.unit}</span></div>`).join("")
+          + `<p class="hint" style="margin-top:8px;">Across ${avg._count} logged day${avg._count===1?"":"s"} in the last 7.</p>`
+          : `<div class="no-data">No data in the last 7 days.</div>`}
+      </div>
+    `;
+  }
+};
+
+function openNutritionSheet(){
+  const d = screenDate("nutrition");
+  const log = getNutrition(d) || {};
+  const tg = STATE.settings.nutritionTargets;
+  openSheet(`
+    <h3>Nutrition — ${prettyDate(d)}</h3>
+    <p class="hint" style="margin-bottom:12px;">Enter the day’s food totals from a label or another app. Calories from drink sugar are added automatically.</p>
+    ${NUTRIENTS.map(n=>`
+      <label class="field"><span>${n.lab} (${n.unit})${tg[n.key]?` · target ${fmt(tg[n.key],0)}`:""}</span>
+        <input class="input" id="nt_${n.key}" type="number" inputmode="decimal" value="${log[n.key]!=null?esc(log[n.key]):""}" placeholder="0"></label>
+    `).join("")}
+    <label class="field"><span>Notes</span><textarea class="input" id="nt_notes" placeholder="Optional">${log.notes?esc(log.notes):""}</textarea></label>
+    <button class="btn primary full" onclick="saveNutrition()">Save</button>
+    ${getNutrition(d)?`<button class="btn full bad ghost" onclick="deleteNutrition()" style="margin-top:8px;">Delete day</button>`:""}
+  `);
+}
+function saveNutrition(){
+  const d = screenDate("nutrition");
+  let log = getNutrition(d);
+  if (!log){ log = { id:uid("nut"), date:d, source:"nutrition", createdAt:Date.now() }; STATE.nutritionLogs.push(log); }
+  NUTRIENTS.forEach(n => { const v = $("#nt_"+n.key).value; log[n.key] = v===""?null:num(v); });
+  log.notes = $("#nt_notes").value.trim();
+  log.updatedAt = Date.now();
+  save(); closeSheet(); toast("Nutrition saved"); navigate("nutrition");
+}
+function deleteNutrition(){
+  const d = screenDate("nutrition");
+  STATE.nutritionLogs = STATE.nutritionLogs.filter(l=>l.date!==d);
+  save(); closeSheet(); toast("Deleted"); navigate("nutrition");
+}
+
+/* =====================================================================
+   SECTION 4 — BODY COMPOSITION  (one entry per day, 13 metrics)
+   ===================================================================== */
+const BODY_METRICS = [
+  { key:"weight",          lab:"Weight",          unit:"kg",   dp:1, better:"down" },
+  { key:"bmi",             lab:"BMI",             unit:"",     dp:1, better:"down" },
+  { key:"bodyFat",         lab:"Body fat",        unit:"%",    dp:1, better:"down" },
+  { key:"skeletalMuscle",  lab:"Skeletal muscle", unit:"%",    dp:1, better:"up"   },
+  { key:"fatFreeMass",     lab:"Fat-free mass",   unit:"kg",   dp:1, better:"up"   },
+  { key:"subcutaneousFat", lab:"Subcutaneous fat",unit:"%",    dp:1, better:"down" },
+  { key:"visceralFat",     lab:"Visceral fat",    unit:"",     dp:0, better:"down" },
+  { key:"bodyWater",       lab:"Body water",      unit:"%",    dp:1, better:"up"   },
+  { key:"muscleMass",      lab:"Muscle mass",     unit:"kg",   dp:1, better:"up"   },
+  { key:"boneMass",        lab:"Bone mass",       unit:"kg",   dp:2, better:"up"   },
+  { key:"protein",         lab:"Protein",         unit:"%",    dp:1, better:"up"   },
+  { key:"bmr",             lab:"BMR",             unit:"kcal", dp:0, better:"up"   },
+  { key:"metabolicAge",    lab:"Metabolic age",   unit:"yrs",  dp:0, better:"down" }
+];
+
+function bodyLogsSorted(){ return STATE.bodyCompositionLogs.slice().sort((a,b)=> a.date<b.date?-1:a.date>b.date?1:0); }
+function latestBody(){ const s=bodyLogsSorted(); return s[s.length-1]||null; }
+function bodyOnOrBefore(dateISO){ const s=bodyLogsSorted().filter(l=>l.date<=dateISO); return s[s.length-1]||null; }
+
+/* returns delta vs previous entry, ~7d and ~30d ago */
+function bodyChange(key){
+  const s = bodyLogsSorted().filter(l => l[key]!=null && l[key]!=="");
+  if (s.length < 1) return null;
+  const latest = s[s.length-1];
+  const prev = s.length>=2 ? s[s.length-2] : null;
+  const ref = (back) => { const target = addDays(latest.date, -back);
+    const c = s.filter(l=>l.date<=target); return c.length?c[c.length-1]:null; };
+  const w7 = ref(7), w30 = ref(30);
+  const dv = (o) => (o && o!==latest) ? num(latest[key])-num(o[key]) : null;
+  return { latest:num(latest[key]), prev:dv(prev), w7:dv(w7), w30:dv(w30) };
+}
+function changeMarkup(delta, dp, better){
+  if (delta==null || Math.abs(delta) < (dp?Math.pow(10,-dp)/2:0.5)) return `<span class="m-chg flat">– no change</span>`;
+  const up = delta>0;
+  const inv = better==="down" ? "inv" : "";
+  return `<span class="m-chg ${up?"up":"down"} ${inv}">${up?"▲":"▼"} ${fmt(Math.abs(delta),dp)}</span>`;
+}
+
+SCREENS.body = {
+  title: "Body composition",
+  render(){
+    const d = screenDate("body");
+    const latest = latestBody();
+    const entryForDay = STATE.bodyCompositionLogs.find(l=>l.date===d);
+    return `
+      ${dateBar("body")}
+      <div class="card">
+        <div class="row spread"><h3>Measurements</h3>
+          <button class="btn sm primary" onclick="openBodySheet()">${entryForDay?"Edit day":"Log day"}</button></div>
+        ${entryForDay?`<p class="hint">Entry saved for ${prettyDate(d)}.</p>`:`<p class="hint">No entry for ${prettyDate(d)} yet.</p>`}
+      </div>
+
+      <h3 class="section-h">Latest readings</h3>
+      ${latest ? `<div class="metric-grid">
+        ${BODY_METRICS.map(m=>{
+          const ch = bodyChange(m.key);
+          if (!ch || latest[m.key]==null || latest[m.key]==="") return `
+            <div class="metric"><div class="m-lab">${m.lab}</div><div class="m-val">–</div></div>`;
+          return `<div class="metric">
+            <div class="m-lab">${m.lab}</div>
+            <div class="m-val">${fmt(ch.latest,m.dp)}<span class="m-unit"> ${m.unit}</span></div>
+            ${changeMarkup(ch.prev, m.dp, m.better)}
+            <div class="hint" style="margin-top:3px;font-size:.68rem;">7d ${ch.w7==null?"–":(ch.w7>0?"+":"")+fmt(ch.w7,m.dp)} · 30d ${ch.w30==null?"–":(ch.w30>0?"+":"")+fmt(ch.w30,m.dp)}</div>
+          </div>`;
+        }).join("")}
+      </div>
+      <p class="hint" style="margin-top:10px;">Latest from ${prettyDate(latest.date)}. Arrows show change since the previous entry.</p>`
+      : `<div class="empty"><span class="big">⚖️</span>No body measurements logged yet.</div>`}
+    `;
+  }
+};
+
+function openBodySheet(){
+  const d = screenDate("body");
+  const log = STATE.bodyCompositionLogs.find(l=>l.date===d) || {};
+  openSheet(`
+    <h3>Body composition — ${prettyDate(d)}</h3>
+    <p class="hint" style="margin-bottom:12px;">Enter values from your smart scale. Leave any blank.</p>
+    <div class="grid2">
+      ${BODY_METRICS.map(m=>`
+        <label class="field"><span>${m.lab}${m.unit?` (${m.unit})`:""}</span>
+          <input class="input" id="bc_${m.key}" type="number" inputmode="decimal" step="${m.dp?Math.pow(10,-m.dp):1}" value="${log[m.key]!=null?esc(log[m.key]):""}" placeholder="–"></label>
+      `).join("")}
+    </div>
+    <label class="field"><span>Notes</span><textarea class="input" id="bc_notes" placeholder="Optional">${log.notes?esc(log.notes):""}</textarea></label>
+    <button class="btn primary full" onclick="saveBody()">Save</button>
+    ${STATE.bodyCompositionLogs.find(l=>l.date===d)?`<button class="btn full bad ghost" onclick="deleteBody()" style="margin-top:8px;">Delete day</button>`:""}
+  `);
+}
+function saveBody(){
+  const d = screenDate("body");
+  let log = STATE.bodyCompositionLogs.find(l=>l.date===d);
+  if (!log){ log = { id:uid("body"), date:d, source:"body", createdAt:Date.now() }; STATE.bodyCompositionLogs.push(log); }
+  BODY_METRICS.forEach(m => { const v = $("#bc_"+m.key).value; log[m.key] = v===""?null:num(v); });
+  log.notes = $("#bc_notes").value.trim();
+  log.updatedAt = Date.now();
+  save(); closeSheet(); toast("Measurements saved"); navigate("body");
+}
+function deleteBody(){
+  const d = screenDate("body");
+  STATE.bodyCompositionLogs = STATE.bodyCompositionLogs.filter(l=>l.date!==d);
+  save(); closeSheet(); toast("Deleted"); navigate("body");
+}
+
+/* =====================================================================
+   SECTION 5 — TEETH BRUSHING  (morning + evening per day)
+   ===================================================================== */
+function getBrushing(date, slot){ return STATE.brushingLogs.find(l => l.date===date && l.slot===slot) || null; }
+
+function brushStreak(){
+  // consecutive days (ending today, or yesterday if today incomplete) with BOTH brushes done
+  const bothDone = (d) => { const m=getBrushing(d,"morning"), e=getBrushing(d,"evening"); return m&&m.done&&e&&e.done; };
+  let day = todayISO();
+  if (!bothDone(day)) day = addDays(day,-1);
+  let streak = 0;
+  while (bothDone(day)){ streak++; day = addDays(day,-1); }
+  return streak;
+}
+function brushStats(){
+  const durations = STATE.brushingLogs.filter(l=>l.done && l.durationSec>0).map(l=>l.durationSec);
+  const avgDur = durations.length ? durations.reduce((a,b)=>a+b,0)/durations.length : 0;
+  const dates = [...new Set(STATE.brushingLogs.map(l=>l.date))];
+  const bothDays = dates.filter(d => { const m=getBrushing(d,"morning"),e=getBrushing(d,"evening"); return m&&m.done&&e&&e.done; }).length;
+  return { streak:brushStreak(), avgDur, bothDays, totalDays:dates.length };
+}
+
+SCREENS.teeth = {
+  title: "Teeth brushing",
+  render(){
+    const d = screenDate("teeth");
+    const st = brushStats();
+    const target = STATE.settings.brushingTargetSec;
+    const slotCard = (slot, emoji, label) => {
+      const log = getBrushing(d, slot);
+      const done = log && log.done;
+      return `<div class="card brush-card">
+        <div class="bc-emoji">${emoji}</div>
+        <div class="bc-main">
+          <div style="font-weight:700;">${label}</div>
+          <div class="hint">${done?`Done · ${mmss(log.durationSec||0)}`:"Not done yet"}</div>
+        </div>
+        <button class="toggle ${done?"on":""}" onclick="quickToggleBrush('${slot}')"><span class="knob"></span></button>
+      </div>
+      <div class="card" style="margin-top:-6px;">
+        ${timerWidget("brush_"+slot, label+" timer")}
+        <div class="btn-row" style="margin-top:10px;">
+          <button class="btn sm good" onclick="saveBrush('${slot}')">Save brush</button>
+          <button class="btn sm ghost" onclick="resetBrushTimer('${slot}')">Reset</button>
+        </div>
+        <p class="hint" style="margin-top:8px;">Target ${mmss(target)}.</p>
+      </div>`;
+    };
+    return `
+      ${dateBar("teeth")}
+      ${slotCard("morning","🌅","Morning brush")}
+      <div style="height:8px"></div>
+      ${slotCard("evening","🌙","Evening brush")}
+
+      <h3 class="section-h">Habit</h3>
+      <div class="card">
+        <div class="grid3" style="text-align:center;">
+          <div><div class="stat-big" style="font-size:1.7rem;">${st.streak}</div><div class="stat-label">Day streak</div></div>
+          <div><div class="stat-big" style="font-size:1.7rem;">${st.avgDur?mmss(st.avgDur):"–"}</div><div class="stat-label">Avg time</div></div>
+          <div><div class="stat-big" style="font-size:1.7rem;">${st.bothDays}</div><div class="stat-label">Full days</div></div>
+        </div>
+      </div>
+    `;
+  },
+  mount(){
+    // make sure timers reflect any already-saved duration for the day
+    const d = screenDate("teeth");
+    ["morning","evening"].forEach(slot=>{
+      const log = getBrushing(d, slot);
+      if (log && log.durationSec) swSet("brush_"+slot, log.durationSec);
+      const disp=document.getElementById("swdisp_brush_"+slot); if(disp) disp.textContent = mmss(swEnsure("brush_"+slot).sec);
+    });
+  }
+};
+
+function ensureBrush(date, slot){
+  let log = getBrushing(date, slot);
+  if (!log){ log = { id:uid("brush"), date, slot, source:"teeth", done:false, durationSec:0, notes:"", createdAt:Date.now() }; STATE.brushingLogs.push(log); }
+  return log;
+}
+function quickToggleBrush(slot){
+  const d = screenDate("teeth");
+  const log = ensureBrush(d, slot);
+  log.done = !log.done; log.updatedAt = Date.now();
+  save(); navigate("teeth");
+}
+function saveBrush(slot){
+  const d = screenDate("teeth");
+  const log = ensureBrush(d, slot);
+  log.done = true;
+  const sec = swEnsure("brush_"+slot).sec;
+  if (sec>0) log.durationSec = sec;
+  log.updatedAt = Date.now();
+  save(); toast("Brush saved"); navigate("teeth");
+}
+function resetBrushTimer(slot){ swReset("brush_"+slot, "swdisp_brush_"+slot, "swbtn_brush_"+slot); }
+
+/* =====================================================================
+   SECTION 6 — TRENDS / GRAPHS   (pure SVG, no external libraries)
+   ===================================================================== */
+let TREND_CAT   = "workouts";
+let TREND_RANGE = 30;          // 7 | 30 | 90 | "all"
+
+function allDataDates(){
+  const ds = [];
+  STATE.workoutLogs.forEach(l=>ds.push(l.date));
+  STATE.hydrationLogs.forEach(l=>ds.push(l.date));
+  STATE.nutritionLogs.forEach(l=>ds.push(l.date));
+  STATE.bodyCompositionLogs.forEach(l=>ds.push(l.date));
+  STATE.brushingLogs.forEach(l=>ds.push(l.date));
+  return ds.sort();
+}
+function rangeDates(){
+  let start;
+  if (TREND_RANGE === "all"){
+    const ds = allDataDates();
+    start = ds.length ? ds[0] : addDays(todayISO(), -29);
+  } else {
+    start = addDays(todayISO(), -(TREND_RANGE-1));
+  }
+  const out = []; let d = start;
+  let guard = 0;
+  while (d <= todayISO() && guard < 1500){ out.push(d); d = addDays(d,1); guard++; }
+  return out;
+}
+function mondayOf(iso){ const d=fromISO(iso); const wd=(d.getDay()+6)%7; return addDays(iso,-wd); }
+function weekBuckets(dates){
+  const map = new Map();
+  dates.forEach(d=>{ const k=mondayOf(d); if(!map.has(k)) map.set(k,[]); map.get(k).push(d); });
+  return [...map.keys()].sort();
+}
+function shortDate(iso){ const [y,m,d]=iso.split("-"); return `${+d}/${+m}`; }
+
+/* ---- core SVG chart renderer ---- */
+function buildChart(title, sub, dates, series, opts={}){
+  const W=600, H=250, padL=46, padR=14, padT=12, padB=34;
+  const plotW=W-padL-padR, plotH=H-padT-padB;
+  let vals=[];
+  series.forEach(s=>s.values.forEach(v=>{ if(v!=null && isFinite(v)) vals.push(v); }));
+  if (opts.ref!=null) vals.push(opts.ref.value);
+  if (!vals.length){
+    return `<div class="card chart-card"><div class="chart-title">${esc(title)}</div>${sub?`<div class="chart-sub">${esc(sub)}</div>`:""}<div class="no-data">No data in this range.</div></div>`;
+  }
+  let minV=Math.min(...vals), maxV=Math.max(...vals);
+  if (minV>0) minV=0;
+  if (maxV===minV) maxV=minV+1;
+  maxV = maxV + (maxV-minV)*0.10;
+  const n=dates.length;
+  const xFor = i => padL + (n<=1 ? plotW/2 : (i/(n-1))*plotW);
+  const yFor = v => padT + plotH - ((v-minV)/(maxV-minV))*plotH;
+
+  // gridlines + y labels
+  let grid="", STEPS=4;
+  for (let g=0; g<=STEPS; g++){
+    const v = minV + (maxV-minV)*(g/STEPS);
+    const y = yFor(v);
+    grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="1"/>`;
+    grid += `<text x="${padL-6}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="11" fill="var(--text-faint)">${fmt(v, opts.integer?0:(maxV<10?1:0))}</text>`;
+  }
+  // x labels (~5)
+  let xlab="";
+  const labCount = Math.min(5, n);
+  for (let i=0;i<labCount;i++){
+    const idx = labCount===1?0:Math.round(i*(n-1)/(labCount-1));
+    xlab += `<text x="${xFor(idx).toFixed(1)}" y="${H-12}" text-anchor="middle" font-size="11" fill="var(--text-faint)">${shortDate(dates[idx])}</text>`;
+  }
+  // ref line
+  let refSvg="";
+  if (opts.ref!=null){
+    const y=yFor(opts.ref.value);
+    refSvg = `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="${opts.ref.color||"var(--text-faint)"}" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <text x="${W-padR}" y="${(y-5).toFixed(1)}" text-anchor="end" font-size="10" fill="${opts.ref.color||"var(--text-faint)"}">${esc(opts.ref.label||"")}</text>`;
+  }
+  // series
+  let body="";
+  series.forEach(s=>{
+    if (s.type==="bar"){
+      const band = plotW/n, bw = Math.max(2, band*0.62);
+      s.values.forEach((v,i)=>{
+        if (v==null||!isFinite(v)||v===0) return;
+        const x = padL + band*i + (band-bw)/2;
+        const y = yFor(v), h = yFor(minV)-y;
+        body += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" rx="2" fill="${s.color}"/>`;
+      });
+    } else {
+      // line, breaking on null
+      let dpath="", started=false, pts="";
+      s.values.forEach((v,i)=>{
+        if (v==null||!isFinite(v)){ started=false; return; }
+        const x=xFor(i), y=yFor(v);
+        dpath += (started?` L`:` M`)+` ${x.toFixed(1)} ${y.toFixed(1)}`;
+        started=true;
+        if (n<=45) pts += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.6" fill="${s.color}"/>`;
+      });
+      body += `<path d="${dpath.trim()}" fill="none" stroke="${s.color}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>${pts}`;
+    }
+  });
+  const legend = series.length>1 || series[0].name
+    ? `<div class="chart-legend">${series.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.name||title)}</span>`).join("")}${opts.ref!=null?`<span><i style="background:${opts.ref.color||"var(--text-faint)"}"></i>${esc(opts.ref.label||"target")}</span>`:""}</div>`
+    : "";
+
+  return `<div class="card chart-card">
+    <div class="chart-title">${esc(title)}</div>
+    ${sub?`<div class="chart-sub">${esc(sub)}</div>`:""}
+    <div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img">
+      ${grid}${refSvg}${body}${xlab}
+    </svg></div>
+    ${legend}
+  </div>`;
+}
+
+/* map a per-day value function onto the date range */
+function daily(dates, fn){ return dates.map(fn); }
+
+SCREENS.trends = {
+  title: "Trends",
+  render(){
+    const cats = [["workouts","Workouts"],["hydration","Hydration"],["nutrition","Nutrition"],["body","Body"],["teeth","Teeth"]];
+    const ranges = [[7,"7d"],[30,"30d"],[90,"90d"],["all","All"]];
+    return `
+      <div class="seg" style="margin-bottom:10px;">
+        ${cats.map(([id,nm])=>`<button class="${TREND_CAT===id?"on":""}" onclick="setTrendCat('${id}')">${nm}</button>`).join("")}
+      </div>
+      <div class="seg" style="margin-bottom:14px;">
+        ${ranges.map(([id,nm])=>`<button class="${String(TREND_RANGE)===String(id)?"on":""}" onclick="setTrendRange('${id}')">${nm}</button>`).join("")}
+      </div>
+      <div id="trendCharts">${trendCharts()}</div>
+    `;
+  }
+};
+function setTrendCat(c){ TREND_CAT=c; navigate("trends"); }
+function setTrendRange(r){ TREND_RANGE = (r==="all"?"all":+r); navigate("trends"); }
+
+function trendCharts(){
+  const dates = rangeDates();
+  const weeks = weekBuckets(dates);
+  const U = STATE.settings.units.distance;
+  let html="";
+
+  if (TREND_CAT==="workouts"){
+    const completed = (d)=> STATE.workoutLogs.find(l=>l.date===d && (l.status==="Completed"||l.status==="Unscheduled"));
+    // per week: workouts, runs, strength, missed, rest
+    const wkVal = (test) => weeks.map(wk => {
+      const days = dates.filter(d=>mondayOf(d)===wk);
+      return days.filter(test).length;
+    });
+    const isRunDay = d => { const l=completed(d); return l && isRunNorm(norm(l.actual)); };
+    const isStrDay = d => { const l=completed(d); return l && !isRunNorm(norm(l.actual)) && norm(l.actual); };
+    const isMissed = d => { const l=STATE.workoutLogs.find(x=>x.date===d); return l && l.status==="Missed"; };
+    const isRest   = d => { const l=STATE.workoutLogs.find(x=>x.date===d); return l && l.status==="Rest Day"; };
+
+    html += buildChart("Workouts completed per week","Runs + strength sessions", weeks.map(shortDate),
+      [{name:"Completed",color:"var(--accent)",type:"bar",values:wkVal(d=>{const l=completed(d);return !!(l&&norm(l.actual));})}], {integer:true});
+
+    const distOf = (d,kind)=>{ const l=completed(d); if(l && norm(l.actual)===kind) return num(l.actualDistance,null); return null; };
+    html += buildChart(`Running distance over time (${U})`,"All completed runs", dates.map(shortDate),
+      [{name:"Distance",color:"var(--hydration)",type:"line",values:daily(dates,d=>{const l=completed(d);return (l&&isRunNorm(norm(l.actual)))?num(l.actualDistance,null):null;})}]);
+
+    html += buildChart(`Long Run distance (${U})`,"", dates.map(shortDate),
+      [{name:"Long",color:"#ff9f0a",type:"line",values:daily(dates,d=>distOf(d,"Long"))}]);
+    html += buildChart(`Medium Run distance (${U})`,"", dates.map(shortDate),
+      [{name:"Medium",color:"#30d158",type:"line",values:daily(dates,d=>distOf(d,"Medium"))}]);
+    html += buildChart(`Short Run distance (${U})`,"", dates.map(shortDate),
+      [{name:"Short",color:"#64d2ff",type:"line",values:daily(dates,d=>distOf(d,"Short"))}]);
+
+    html += buildChart("Strength sessions per week","Legs · Upper 1 · Upper 2", weeks.map(shortDate),
+      [{name:"Strength",color:"#bf5af2",type:"bar",values:wkVal(isStrDay)}], {integer:true});
+    html += buildChart("Missed workouts per week","", weeks.map(shortDate),
+      [{name:"Missed",color:"var(--bad)",type:"bar",values:wkVal(isMissed)}], {integer:true});
+    html += buildChart("Rest days per week","", weeks.map(shortDate),
+      [{name:"Rest",color:"var(--text-dim)",type:"bar",values:wkVal(isRest)}], {integer:true});
+  }
+
+  if (TREND_CAT==="hydration"){
+    const sum = d=>hydrationSummary(d);
+    html += buildChart("Effective hydration per day (ml)","Dashed line = daily goal", dates.map(shortDate),
+      [{name:"Effective",color:"var(--hydration)",type:"line",values:daily(dates,d=>{const s=sum(d);return s.logs.length?s.effective:null;})}],
+      {ref:{value:STATE.settings.hydrationGoalMl,label:"goal",color:"var(--good)"}});
+    html += buildChart("Total fluid per day (ml)","", dates.map(shortDate),
+      [{name:"Fluid",color:"#0a84ff",type:"bar",values:daily(dates,d=>{const s=sum(d);return s.logs.length?s.fluid:null;})}]);
+    html += buildChart("Caffeine per day (mg)","", dates.map(shortDate),
+      [{name:"Caffeine",color:"var(--caffeine)",type:"line",values:daily(dates,d=>{const s=sum(d);return s.logs.length?s.caffeine:null;})}]);
+    html += buildChart("Sugar from drinks per day (g)","", dates.map(shortDate),
+      [{name:"Sugar",color:"var(--sugar)",type:"line",values:daily(dates,d=>{const s=sum(d);return s.logs.length?s.sugar:null;})}]);
+    html += buildChart("Alcohol per day (units)","", dates.map(shortDate),
+      [{name:"Units",color:"var(--alcohol)",type:"bar",values:daily(dates,d=>{const s=sum(d);return s.logs.length?s.alcoholUnits:null;})}]);
+    // goal completion rate
+    const logged = dates.filter(d=>sum(d).logs.length);
+    const met = logged.filter(d=>sum(d).met).length;
+    html += `<div class="card"><div class="chart-title">Goal completion</div>
+      <div class="kv"><span class="k">Days hitting goal</span><span class="v">${met} / ${logged.length||0}</span></div>
+      <div class="kv"><span class="k">Completion rate</span><span class="v">${logged.length?Math.round(met/logged.length*100):0}%</span></div></div>`;
+  }
+
+  if (TREND_CAT==="nutrition"){
+    const get = d=>getNutrition(d);
+    const line = (key,lab,col)=> buildChart(lab, "", dates.map(shortDate),
+      [{name:lab,color:col,type:"line",values:daily(dates,d=>{const l=get(d);return l?num(l[key],null):null;})}],
+      {ref: STATE.settings.nutritionTargets[key]?{value:num(STATE.settings.nutritionTargets[key]),label:"target",color:"var(--good)"}:null,
+       integer: key==="calories"});
+    html += buildChart("Calories per day (kcal)","incl. drink sugar", dates.map(shortDate),
+      [{name:"Calories",color:"var(--accent)",type:"line",values:daily(dates,d=>{
+        const l=get(d); const hasDrink=hydrationSummary(d).logs.length>0;
+        return (l||hasDrink) ? totalCaloriesFor(d) : null;
+      })}],
+      {ref: STATE.settings.nutritionTargets.calories?{value:num(STATE.settings.nutritionTargets.calories),label:"target",color:"var(--good)"}:null,
+       integer:true});
+    html += line("protein","Protein per day (g)","#30d158");
+    html += line("carbs","Carbs per day (g)","#ff9f0a");
+    html += line("sugar","Sugar per day (g)","var(--sugar)");
+    html += line("fibre","Fibre per day (g)","#a2845e");
+    html += line("salt","Salt per day (g)","#64d2ff");
+    // macro split (7-day avg)
+    const avg = nutritionAverages(7);
+    if (avg){
+      const p=avg.protein*4, c=avg.carbs*4, f=avg.fat*9, tot=p+c+f||1;
+      html += `<div class="card"><div class="chart-title">Carbs / fat / protein split</div><div class="chart-sub">By energy, last 7 days</div>
+        <div class="bar" style="height:18px;display:flex;">
+          <i style="width:${(c/tot*100).toFixed(1)}%;background:#ff9f0a;border-radius:6px 0 0 6px;"></i>
+          <i style="width:${(f/tot*100).toFixed(1)}%;background:#ff453a;border-radius:0;"></i>
+          <i style="width:${(p/tot*100).toFixed(1)}%;background:#30d158;border-radius:0 6px 6px 0;"></i>
+        </div>
+        <div class="chart-legend"><span><i style="background:#ff9f0a"></i>Carbs ${Math.round(c/tot*100)}%</span><span><i style="background:#ff453a"></i>Fat ${Math.round(f/tot*100)}%</span><span><i style="background:#30d158"></i>Protein ${Math.round(p/tot*100)}%</span></div></div>`;
+    }
+  }
+
+  if (TREND_CAT==="body"){
+    const line = (key,lab,col,dp)=>{
+      const vals = daily(dates,d=>{ const l=bodyOnOrBefore(d); if(!l)return null;
+        // only plot exact entries to avoid flat fill
+        const exact = STATE.bodyCompositionLogs.find(x=>x.date===d);
+        return exact && exact[key]!=null && exact[key]!=="" ? num(exact[key]) : null; });
+      return buildChart(lab,"",dates.map(shortDate),[{name:lab,color:col,type:"line",values:vals}],{integer:dp===0});
+    };
+    html += line("weight","Weight (kg)","var(--accent)",1);
+    html += line("bodyFat","Body fat (%)","#ff453a",1);
+    html += line("muscleMass","Muscle mass (kg)","#30d158",1);
+    html += line("bodyWater","Body water (%)","#0a84ff",1);
+    html += line("visceralFat","Visceral fat","#ff9f0a",0);
+    html += line("bmr","BMR (kcal)","#bf5af2",0);
+    html += line("metabolicAge","Metabolic age (yrs)","#64d2ff",0);
+  }
+
+  if (TREND_CAT==="teeth"){
+    html += buildChart("Brushes completed per day","0, 1 or 2 brushes", dates.map(shortDate),
+      [{name:"Brushes",color:"var(--good)",type:"bar",values:daily(dates,d=>{
+        let c=0; if(getBrushing(d,"morning")?.done)c++; if(getBrushing(d,"evening")?.done)c++; return c||null; })}], {integer:true});
+    html += buildChart("Brushing duration over time (sec)","Both brushes averaged", dates.map(shortDate),
+      [{name:"Seconds",color:"var(--accent)",type:"line",values:daily(dates,d=>{
+        const ds=[getBrushing(d,"morning"),getBrushing(d,"evening")].filter(x=>x&&x.done&&x.durationSec>0).map(x=>x.durationSec);
+        return ds.length? ds.reduce((a,b)=>a+b,0)/ds.length : null; })}],
+      {ref:{value:STATE.settings.brushingTargetSec,label:"target",color:"var(--good)"}});
+    // morning/evening consistency
+    const total = dates.length;
+    const m = dates.filter(d=>getBrushing(d,"morning")?.done).length;
+    const e = dates.filter(d=>getBrushing(d,"evening")?.done).length;
+    html += `<div class="card"><div class="chart-title">Morning / evening consistency</div><div class="chart-sub">Over ${total} days</div>
+      <div class="kv"><span class="k">🌅 Morning</span><span class="v">${m} (${total?Math.round(m/total*100):0}%)</span></div>
+      <div class="kv"><span class="k">🌙 Evening</span><span class="v">${e} (${total?Math.round(e/total*100):0}%)</span></div></div>`;
+  }
+
+  return html || `<div class="no-data">Nothing to chart yet.</div>`;
+}
+
+/* =====================================================================
+   SECTION 7 — DATA EXPORT / IMPORT
+   ===================================================================== */
+function download(filename, text, mime="text/plain"){
+  try {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 1500);
+  } catch(e){
+    // Fallback: open data URI in a new tab
+    const uri = "data:"+mime+";charset=utf-8,"+encodeURIComponent(text);
+    window.open(uri, "_blank");
+  }
+}
+function csvEscape(v){ if(v==null) return ""; v=String(v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+function objectsToCsv(rows){
+  if(!rows.length) return "";
+  const set = new Set(); rows.forEach(r=>Object.keys(r).forEach(k=>set.add(k)));
+  const keys=[...set];
+  return keys.join(",") + "\n" + rows.map(r=>keys.map(k=>csvEscape(r[k])).join(",")).join("\n");
+}
+function strengthRows(){
+  const out=[];
+  STATE.strengthLogs.forEach(s=>{
+    (s.exercises||[]).forEach(ex=>{
+      (ex.sets||[]).forEach((set,i)=>{
+        out.push({ date:s.date, workoutType:s.workoutType, exercise:ex.name, setNumber:i+1, kg:set.kg, reps:set.reps, done:set.done, durationSec:s.durationSec, notes:s.notes });
+      });
+    });
+  });
+  return out;
+}
+function flattenSettings(){
+  const s=STATE.settings;
+  return { hydrationGoalMl:s.hydrationGoalMl, brushingTargetSec:s.brushingTargetSec,
+    ...Object.fromEntries(Object.entries(s.nutritionTargets).map(([k,v])=>["target_"+k,v])),
+    weightUnit:s.units.weight, distanceUnit:s.units.distance, volumeUnit:s.units.volume,
+    theme:s.theme, accent:s.accent, compact:s.compact, largeText:s.largeText,
+    firstLongRunRun:s.firstLongRunRun, firstLongRunWalk:s.firstLongRunWalk };
+}
+const EXPORT_CATS = [
+  { key:"workouts",  lab:"Workouts",         rows:()=>STATE.workoutLogs,         json:()=>STATE.workoutLogs },
+  { key:"strength",  lab:"Strength logs",     rows:()=>strengthRows(),            json:()=>STATE.strengthLogs },
+  { key:"hydration", lab:"Hydration",         rows:()=>STATE.hydrationLogs,       json:()=>STATE.hydrationLogs },
+  { key:"drinks",    lab:"Drink database",    rows:()=>STATE.drinkDatabase,       json:()=>STATE.drinkDatabase },
+  { key:"nutrition", lab:"Nutrition",         rows:()=>STATE.nutritionLogs,       json:()=>STATE.nutritionLogs },
+  { key:"body",      lab:"Body composition",  rows:()=>STATE.bodyCompositionLogs, json:()=>STATE.bodyCompositionLogs },
+  { key:"teeth",     lab:"Teeth brushing",    rows:()=>STATE.brushingLogs,        json:()=>STATE.brushingLogs },
+  { key:"settings",  lab:"Settings",          rows:()=>[flattenSettings()],       json:()=>STATE.settings }
+];
+
+function dataSummary(){
+  const dates = new Set(allDataDates());
+  const done = STATE.workoutLogs.filter(l=>l.status==="Completed"||l.status==="Unscheduled");
+  const runs = done.filter(l=>isRunNorm(norm(l.actual)));
+  const strength = STATE.strengthLogs.length;
+  // average hydration over logged days
+  const hyDays = [...new Set(STATE.hydrationLogs.map(l=>l.date))];
+  const avgHy = hyDays.length ? hyDays.reduce((s,d)=>s+hydrationSummary(d).effective,0)/hyDays.length : 0;
+  const nut = STATE.nutritionLogs.filter(l=>l.calories!=null);
+  const avgCal = nut.length ? nut.reduce((s,l)=>s+totalCaloriesFor(l.date),0)/nut.length : 0;
+  const lb = latestBody();
+  const brushDays = [...new Set(STATE.brushingLogs.map(l=>l.date))];
+  const fullBrush = brushDays.filter(d=>getBrushing(d,"morning")?.done && getBrushing(d,"evening")?.done).length;
+  return {
+    days: dates.size, workouts: done.length, runs: runs.length, strength,
+    avgHy, avgCal, weight: lb?lb.weight:null, bodyFat: lb?lb.bodyFat:null,
+    brushRate: brushDays.length ? Math.round(fullBrush/brushDays.length*100) : 0
+  };
+}
+
+SCREENS.data = {
+  title: "Data",
+  render(){
+    const s = dataSummary();
+    return `
+      <div class="card">
+        <h3>Data summary</h3>
+        <div class="kv"><span class="k">Days tracked</span><span class="v">${s.days}</span></div>
+        <div class="kv"><span class="k">Workouts completed</span><span class="v">${s.workouts}</span></div>
+        <div class="kv"><span class="k">Runs</span><span class="v">${s.runs}</span></div>
+        <div class="kv"><span class="k">Strength sessions</span><span class="v">${s.strength}</span></div>
+        <div class="kv"><span class="k">Average hydration</span><span class="v">${fmt(s.avgHy,0)} ml</span></div>
+        <div class="kv"><span class="k">Average calories</span><span class="v">${s.avgCal?fmt(s.avgCal,0)+" kcal":"–"}</span></div>
+        <div class="kv"><span class="k">Latest weight</span><span class="v">${s.weight!=null?fmt(s.weight,1)+" kg":"–"}</span></div>
+        <div class="kv"><span class="k">Latest body fat</span><span class="v">${s.bodyFat!=null?fmt(s.bodyFat,1)+" %":"–"}</span></div>
+        <div class="kv"><span class="k">Brushing completion</span><span class="v">${s.brushRate}%</span></div>
+      </div>
+
+      <h3 class="section-h">Export</h3>
+      <div class="card">
+        <p class="hint" style="margin-bottom:10px;">Tick categories, then export. JSON keeps the full structure (ideal for re-import or AI analysis); CSV downloads one file per category.</p>
+        ${EXPORT_CATS.map(c=>`
+          <label class="exp-row"><input type="checkbox" id="exp_${c.key}" checked>
+            <span class="ex-nm">${c.lab}</span></label>`).join("")}
+        <div class="btn-row" style="margin-top:14px;">
+          <button class="btn sm primary" onclick="exportSelected('json')">Export JSON</button>
+          <button class="btn sm" onclick="exportSelected('csv')">Export CSV</button>
+        </div>
+        <button class="btn full ghost" style="margin-top:10px;" onclick="exportAllJson()">Export everything as one JSON</button>
+      </div>
+
+      <h3 class="section-h">Import</h3>
+      <div class="card">
+        <p class="hint" style="margin-bottom:10px;">Restore from a JSON backup. This replaces all current data.</p>
+        <input type="file" id="importFile" accept="application/json,.json" style="display:none" onchange="importJson(this)">
+        <button class="btn full" onclick="document.getElementById('importFile').click()">Choose JSON file…</button>
+      </div>
+
+      <h3 class="section-h">Danger zone</h3>
+      <div class="danger-zone">
+        <p class="hint" style="margin-bottom:10px;">Permanently delete all logged data and reset to defaults.</p>
+        <button class="btn full bad" onclick="clearAllData()">Clear all data</button>
+      </div>
+    `;
+  }
+};
+
+function selectedKeys(){ return EXPORT_CATS.filter(c=>{ const el=$("#exp_"+c.key); return el && el.checked; }); }
+function stamp(){ return todayISO(); }
+function exportSelected(fmtType){
+  const cats = selectedKeys();
+  if (!cats.length){ toast("Select at least one"); return; }
+  if (fmtType==="json"){
+    const out={}; cats.forEach(c=>out[c.key]=c.json());
+    download(`daily-export-${stamp()}.json`, JSON.stringify(out,null,2), "application/json");
+    toast("JSON exported");
+  } else {
+    let i=0;
+    cats.forEach(c=>{
+      const rows=c.rows();
+      const csv=objectsToCsv(rows);
+      if(!csv){ return; }
+      setTimeout(()=>download(`daily-${c.key}-${stamp()}.csv`, csv, "text/csv"), i*350);
+      i++;
+    });
+    toast(i?`Exporting ${i} CSV file${i>1?"s":""}`:"No data to export");
+  }
+}
+function exportAllJson(){
+  download(`daily-backup-${stamp()}.json`, JSON.stringify(STATE,null,2), "application/json");
+  toast("Full backup exported");
+}
+function importJson(input){
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      let parsed = JSON.parse(reader.result);
+      // Accept either a full STATE backup or a {category:data} partial export
+      if (parsed.settings || parsed.workoutLogs || parsed.drinkDatabase){
+        STATE = mergeDefaults(parsed);
+      } else {
+        const base = defaultState();
+        const map = { workouts:"workoutLogs", strength:"strengthLogs", hydration:"hydrationLogs",
+          drinks:"drinkDatabase", nutrition:"nutritionLogs", body:"bodyCompositionLogs", teeth:"brushingLogs" };
+        Object.entries(map).forEach(([k,sk])=>{ if(Array.isArray(parsed[k])) base[sk]=parsed[k]; });
+        if (parsed.settings) base.settings=Object.assign(base.settings, parsed.settings);
+        STATE = mergeDefaults(base);
+      }
+      save(); applySettings(); toast("Data imported"); navigate("data");
+    } catch(e){
+      console.error(e); toast("Import failed — invalid file");
+    }
+  };
+  reader.readAsText(file);
+  input.value="";
+}
+function clearAllData(){
+  if (!confirm("Delete ALL data? This cannot be undone.\n\nTip: export a backup first.")) return;
+  if (!confirm("Are you absolutely sure? Everything will be reset.")) return;
+  STATE = defaultState();
+  save(); applySettings(); toast("All data cleared"); navigate("home");
+}
+
+/* =====================================================================
+   SECTION 8 — SETTINGS
+   ===================================================================== */
+const ACCENTS = ["#0a84ff","#30d158","#ff375f","#bf5af2","#ff9f0a","#64d2ff","#ff453a"];
+
+SCREENS.settings = {
+  title: "Settings",
+  render(){
+    const s = STATE.settings;
+    const cfg = getSyncCfg();
+    return `
+      <div class="card" id="syncCard">
+        <h3>Cloud sync (Google Sheets)</h3>
+        <p class="hint" style="margin:2px 0 12px;">Sync across devices via a Google Apps Script web app. Leave the URL blank to keep everything on this device only.</p>
+        <label class="field"><span>Web app URL</span>
+          <input class="input" id="sync_url" type="url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(cfg.url||"")}"></label>
+        <label class="field"><span>Secret token (optional)</span>
+          <input class="input" id="sync_token" type="text" placeholder="must match the script" value="${esc(cfg.token||"")}"></label>
+        <div class="row wrap" style="gap:8px;margin-top:6px;">
+          <button class="btn sm primary" onclick="saveSyncCfg()">Save &amp; connect</button>
+          <button class="btn sm ghost" onclick="syncLoadNow()">Load from cloud</button>
+          <button class="btn sm ghost" onclick="syncPushNow()">Save to cloud now</button>
+        </div>
+        <div id="syncStatus" style="margin-top:10px;">${syncStatusLine()}</div>
+      </div>
+
+      <div class="card">
+        <h3>Targets</h3>
+        <div class="tt-row"><span class="tt-lab">Daily hydration goal</span>
+          <span><input type="number" id="set_hyd" value="${s.hydrationGoalMl}"> ml</span></div>
+        <div class="tt-row"><span class="tt-lab">Teeth brushing target</span>
+          <span><input type="number" id="set_brush" value="${s.brushingTargetSec}"> sec</span></div>
+        <div class="tt-row"><span class="tt-lab">First Long Run — run</span>
+          <span><input type="number" id="set_flr" value="${s.firstLongRunRun}" step="0.5"> min</span></div>
+        <div class="tt-row"><span class="tt-lab">First Long Run — walk</span>
+          <span><input type="number" id="set_flw" value="${s.firstLongRunWalk}" step="0.5"> min</span></div>
+        <button class="btn sm primary" style="margin-top:12px;" onclick="saveBasicSettings()">Save targets</button>
+      </div>
+
+      <div class="card">
+        <h3>Nutrition targets</h3>
+        ${NUTRIENTS.map(n=>`<div class="tt-row"><span class="tt-lab">${n.lab}</span>
+          <span><input type="number" id="ntg_${n.key}" value="${s.nutritionTargets[n.key]}"> ${n.unit}</span></div>`).join("")}
+        <button class="btn sm primary" style="margin-top:12px;" onclick="saveNutritionTargets()">Save targets</button>
+      </div>
+
+      <div class="card">
+        <h3>Units</h3>
+        <div class="tt-row"><span class="tt-lab">Distance</span>
+          <select class="input" style="width:auto;min-height:38px;" id="u_dist" onchange="setUnit('distance',this.value)">
+            <option value="km" ${s.units.distance==="km"?"selected":""}>km</option>
+            <option value="mi" ${s.units.distance==="mi"?"selected":""}>mi</option></select></div>
+        <div class="tt-row"><span class="tt-lab">Weight</span>
+          <select class="input" style="width:auto;min-height:38px;" id="u_wt" onchange="setUnit('weight',this.value)">
+            <option value="kg" ${s.units.weight==="kg"?"selected":""}>kg</option>
+            <option value="lb" ${s.units.weight==="lb"?"selected":""}>lb</option></select></div>
+        <p class="hint" style="margin-top:8px;">Units set the labels shown next to your figures.</p>
+      </div>
+
+      <div class="card">
+        <h3>Display</h3>
+        <div class="tt-row"><span class="tt-lab">Dark mode</span>
+          <button class="toggle ${s.theme==="dark"?"on":""}" onclick="toggleSetting('theme')"><span class="knob"></span></button></div>
+        <div class="tt-row"><span class="tt-lab">Compact mode</span>
+          <button class="toggle ${s.compact?"on":""}" onclick="toggleSetting('compact')"><span class="knob"></span></button></div>
+        <div class="tt-row"><span class="tt-lab">Larger text</span>
+          <button class="toggle ${s.largeText?"on":""}" onclick="toggleSetting('largeText')"><span class="knob"></span></button></div>
+        <div style="margin-top:14px;">
+          <div class="tt-lab" style="margin-bottom:8px;">Accent colour</div>
+          <div class="row wrap" style="gap:10px;">
+            ${ACCENTS.map(c=>`<button onclick="setAccent('${c}')" aria-label="accent" style="width:34px;height:34px;border-radius:50%;background:${c};border:3px solid ${s.accent===c?"var(--text)":"transparent"};"></button>`).join("")}
+          </div>
+        </div>
+      </div>
+
+      <div class="card flush">
+        <div style="padding:14px 16px 4px"><h3 style="margin:0">Drink database</h3></div>
+        <div style="padding:0 16px 6px"><button class="btn sm ghost" onclick="openCustomDrinkSheet()">＋ Add drink</button></div>
+        ${STATE.drinkDatabase.slice().sort((a,b)=>a.category.localeCompare(b.category)||a.name.localeCompare(b.name)).map(dr=>`
+          <div class="list-item">
+            <div class="li-ic">${dr.icon||"🥤"}</div>
+            <div class="li-main"><div class="li-title">${esc(dr.name)}</div>
+              <div class="li-sub">${esc(dr.category)} · ${dr.hydrationPct}% · ${dr.defaultMl}ml</div></div>
+            <div class="li-actions">
+              <button class="iconbtn" onclick="openCustomDrinkSheet('${dr.id}')">✎</button>
+              <button class="iconbtn" onclick="deleteDrink('${dr.id}')">🗑️</button>
+            </div>
+          </div>`).join("")}
+      </div>
+
+      <div class="card">
+        <h3>Workout types</h3>
+        <p class="hint">Long Run · Medium Run · Short Run · Legs · Upper 1 · Upper 2 · Rest Day. Types are fixed so the scheduler stays consistent.</p>
+      </div>
+
+      <div class="danger-zone">
+        <p class="hint" style="margin-bottom:10px;">Reset everything to defaults.</p>
+        <button class="btn full bad" onclick="clearAllData()">Reset all data</button>
+      </div>
+
+      <p class="hint" style="text-align:center;margin:18px 0 6px;">Daily · health tracker · v1</p>
+    `;
+  }
+};
+
+function saveBasicSettings(){
+  const s=STATE.settings;
+  s.hydrationGoalMl = Math.max(100, num($("#set_hyd").value, s.hydrationGoalMl));
+  s.brushingTargetSec = Math.max(15, num($("#set_brush").value, s.brushingTargetSec));
+  s.firstLongRunRun = Math.max(0.5, num($("#set_flr").value, s.firstLongRunRun));
+  s.firstLongRunWalk = Math.max(0, num($("#set_flw").value, s.firstLongRunWalk));
+  save(); toast("Targets saved");
+}
+function saveNutritionTargets(){
+  NUTRIENTS.forEach(n=>{ STATE.settings.nutritionTargets[n.key] = num($("#ntg_"+n.key).value, STATE.settings.nutritionTargets[n.key]); });
+  save(); toast("Nutrition targets saved");
+}
+function setUnit(kind,val){ STATE.settings.units[kind]=val; save(); toast("Units updated"); }
+function toggleSetting(key){
+  const s=STATE.settings;
+  if (key==="theme") s.theme = s.theme==="dark"?"light":"dark";
+  else s[key] = !s[key];
+  save(); applySettings(); navigate("settings");
+}
+function setAccent(c){ STATE.settings.accent=c; save(); applySettings(); navigate("settings"); }
+
+/* ---- cloud sync UI ---- */
+function syncStatusLine(){
+  const time = SYNC.lastSync ? new Date(SYNC.lastSync).toLocaleString("en-GB",{hour:"2-digit",minute:"2-digit",day:"2-digit",month:"short"}) : null;
+  let dot="var(--text-faint)", txt="";
+  switch(SYNC.state){
+    case "ok":       dot="var(--good)"; txt = "Synced" + (time?` · last ${time}`:""); break;
+    case "loading":  dot="var(--accent)"; txt = "Connecting…"; break;
+    case "saving":   dot="var(--accent)"; txt = "Saving…"; break;
+    case "error":    dot="var(--bad)"; txt = "Offline — using this device’s copy" + (SYNC.error?` (${esc(SYNC.error)})`:""); break;
+    default:         dot="var(--text-faint)"; txt = "Not connected"; break;
+  }
+  return `<span class="pill" style="background:transparent;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${dot};margin-right:7px;vertical-align:middle;"></span>${txt}</span>`;
+}
+function renderSyncCard(){ const el=$("#syncStatus"); if (el) el.innerHTML = syncStatusLine(); }
+
+function saveSyncCfg(){
+  const url = $("#sync_url").value.trim();
+  const token = $("#sync_token").value.trim();
+  setSyncCfg(url, token);
+  if (!url){ SYNC.state="disabled"; SYNC.error=null; toast("Cloud sync turned off"); navigate("settings"); return; }
+  toast("Saved — connecting…");
+  syncLoadNow();
+}
+async function syncLoadNow(){
+  if (!remoteEnabled()){ toast("Add a web app URL first"); return; }
+  setSyncState("loading");
+  try {
+    const remoteRaw = await remoteLoad();
+    const remote = (remoteRaw && Object.keys(remoteRaw).length) ? mergeDefaults(remoteRaw) : null;
+    if (remote && !isEmptyState(remote)){
+      STATE = remote; await saveLocal(); setSyncState("ok");
+      applySettings(); toast("Loaded from cloud"); navigate("settings");
+    } else {
+      if (!isEmptyState(STATE)) await remoteSave(STATE);   // seed an empty sheet
+      setSyncState("ok"); toast("Connected"); navigate("settings");
+    }
+  } catch(e){ setSyncState("error", e.message||String(e)); toast("Couldn’t reach the sheet"); }
+}
+async function syncPushNow(){
+  if (!remoteEnabled()){ toast("Add a web app URL first"); return; }
+  setSyncState("saving");
+  try { await remoteSave(STATE); setSyncState("ok"); toast("Saved to cloud"); }
+  catch(e){ setSyncState("error", e.message||String(e)); toast("Save failed"); }
+}
+
+/* =====================================================================
+   BOOT
+   ===================================================================== */
+(async function boot(){
+  try { await loadState(); }
+  catch(e){ console.warn("Load failed, using defaults", e); STATE = defaultState(); }
+  if (backfillMissedWorkouts()) save();          // auto-log any past unlogged days
+  applySettings();
+  navigate("home");
+})();
+
+</script>
+</body>
+</html>
