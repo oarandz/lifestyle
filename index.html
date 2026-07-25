@@ -508,7 +508,7 @@ async function remoteSave(stateObj){
 /* A state with no logged data at all (used to avoid a first-sync wipe). */
 function isEmptyState(s){
   if (!s) return true;
-  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs"];
+  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals"];
   return arrs.every(k => !Array.isArray(s[k]) || s[k].length === 0);
 }
 
@@ -637,6 +637,8 @@ function defaultState(){
     nutritionLogs: [],       // one per day
     bodyCompositionLogs: [], // one per day
     brushingLogs: [],        // one per day-slot
+    foodLogs: [],            // itemised food entries (barcode / manual), many per day
+    meals: [],               // saved meals / recipes (a named set of foods)
     drinkDatabase: defaultDrinks()
   };
 }
@@ -703,7 +705,7 @@ function mergeDefaults(s){
   s.settings = Object.assign({}, d.settings, s.settings||{});
   s.settings.nutritionTargets = Object.assign({}, d.settings.nutritionTargets, (s.settings.nutritionTargets)||{});
   s.settings.units = Object.assign({}, d.settings.units, (s.settings.units)||{});
-  ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","drinkDatabase"]
+  ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","drinkDatabase"]
     .forEach(k => { if(!Array.isArray(s[k])) s[k] = d[k]; });
   if (!s.drinkDatabase.length) s.drinkDatabase = d.drinkDatabase;
   s.version = 1;
@@ -1097,11 +1099,15 @@ function shiftDate(id,n){ const d=addDays(screenDate(id),n); if(d>todayISO())ret
 function setDate(id,v){ if(!v)return; if(v>todayISO())v=todayISO(); SCREEN_DATE[id]=v; navigate(id); }
 
 /* ---- shared: bottom sheet ---- */
+let SHEET_CLEANUP = null;
 function openSheet(html){
   $("#sheet").innerHTML = `<div class="grab"></div>${html}`;
   $("#sheetBack").classList.add("open");
 }
-function closeSheet(){ $("#sheetBack").classList.remove("open"); }
+function closeSheet(){
+  if (typeof SHEET_CLEANUP === "function"){ try { SHEET_CLEANUP(); } catch(e){} SHEET_CLEANUP = null; }
+  $("#sheetBack").classList.remove("open");
+}
 
 /* ---- home screen ---- */
 SCREENS.home = {
@@ -1747,25 +1753,56 @@ function getNutrition(date){ return STATE.nutritionLogs.find(l => l.date === dat
    their sugar, so those calories are folded into the day's calorie total. */
 const SUGAR_KCAL_PER_G = 4;
 function drinkSugarKcal(date){ return round(hydrationSummary(date).sugar * SUGAR_KCAL_PER_G, 0); }
-/* Day's calories = manually-logged food calories + calories from drink sugar. */
-function totalCaloriesFor(date){
-  const log = getNutrition(date);
-  const food = log && log.calories!=null ? num(log.calories) : 0;
-  return food + drinkSugarKcal(date);
+
+/* Itemised food entries logged for a day (barcode or manual), oldest first. */
+function foodLogsForDate(date){
+  return STATE.foodLogs.filter(f => f.date === date).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+}
+/* One nutrient's total for a day = optional manual daily figure + every food
+   item + (for calories) the calories from drink sugar. */
+function dayNutrient(date, key){
+  const m = getNutrition(date);
+  let v = (m && m[key]!=null) ? num(m[key]) : 0;
+  STATE.foodLogs.forEach(f => { if (f.date===date) v += num(f[key]); });
+  if (key==="calories") v += drinkSugarKcal(date);
+  return v;
+}
+function totalCaloriesFor(date){ return dayNutrient(date, "calories"); }
+function foodKcalFor(date){ let v=0; STATE.foodLogs.forEach(f=>{ if(f.date===date) v+=num(f.calories); }); return v; }
+function dayHasNutrition(date){
+  return !!getNutrition(date) || STATE.foodLogs.some(f=>f.date===date) || drinkSugarKcal(date)>0;
 }
 
+function nutritionDatesInWindow(days){
+  const cutoff = addDays(todayISO(), -(days-1)), today = todayISO();
+  const set = {};
+  const within = dt => dt>=cutoff && dt<=today;
+  STATE.nutritionLogs.forEach(l => { if (within(l.date)) set[l.date]=1; });
+  STATE.foodLogs.forEach(f => { if (within(f.date)) set[f.date]=1; });
+  STATE.hydrationLogs.forEach(h => { if (within(h.date) && num(h.sugarG)>0) set[h.date]=1; });
+  return Object.keys(set);
+}
 function nutritionAverages(days){
-  const cutoff = addDays(todayISO(), -(days-1));
-  const recent = STATE.nutritionLogs.filter(l => l.date >= cutoff && l.date <= todayISO());
-  if (!recent.length) return null;
+  const dates = nutritionDatesInWindow(days);
+  if (!dates.length) return null;
   const avg = {};
-  NUTRIENTS.forEach(n => {
-    avg[n.key] = n.key==="calories"
-      ? recent.reduce((s,l)=>s+totalCaloriesFor(l.date),0) / recent.length
-      : recent.reduce((s,l)=>s+num(l[n.key]),0) / recent.length;
-  });
-  avg._count = recent.length;
+  NUTRIENTS.forEach(n => { avg[n.key] = dates.reduce((s,dt)=>s+dayNutrient(dt,n.key),0) / dates.length; });
+  avg._count = dates.length;
   return avg;
+}
+
+function foodEntryLine(f){
+  const macro = `${fmt(num(f.calories),0)} kcal · P${fmt(num(f.protein),0)} C${fmt(num(f.carbs),0)} F${fmt(num(f.fat),0)}`;
+  const amt = f.basis==="meal" ? "meal" : (f.amountG!=null ? `${fmt(f.amountG,0)} g` : "");
+  return `<div class="list-item">
+    <div class="li-ic">${f.basis==="meal"?"🍱":(f.barcode?"🥫":"🍎")}</div>
+    <div class="li-main"><div class="li-title">${esc(f.name||"Food")}</div>
+      <div class="li-sub">${amt?esc(amt)+" · ":""}${macro}</div></div>
+    <div class="li-actions">
+      <button class="iconbtn" onclick="openFoodItemSheet('${f.id}')">✎</button>
+      <button class="iconbtn" onclick="deleteFoodEntry('${f.id}')">🗑️</button>
+    </div>
+  </div>`;
 }
 
 SCREENS.nutrition = {
@@ -1776,12 +1813,13 @@ SCREENS.nutrition = {
     const tg = STATE.settings.nutritionTargets;
     const avg = nutritionAverages(7);
     const drinkKcal = drinkSugarKcal(d);
-    const hasAny = !!log || drinkKcal>0;
+    const foodKcal = foodKcalFor(d);
+    const foods = foodLogsForDate(d);
+    const hasAny = dayHasNutrition(d);
 
     const rows = NUTRIENTS.map(n => {
-      const isCal = n.key==="calories";
-      const val = isCal ? totalCaloriesFor(d) : (log ? num(log[n.key]) : 0);
-      const has = isCal ? hasAny : !!log;
+      const val = dayNutrient(d, n.key);
+      const has = hasAny;
       const target = num(tg[n.key]);
       const pct = target ? clamp(val/target*100,0,100) : 0;
       let cls = "neutral", barCol = "var(--accent)";
@@ -1789,12 +1827,14 @@ SCREENS.nutrition = {
         if (n.limit){ cls = val>target ? "bad" : "good"; barCol = val>target?"var(--bad)":"var(--good)"; }
         else { cls = val>=target ? "good" : "warn"; barCol = val>=target?"var(--good)":"var(--warn)"; }
       }
-      const sub = isCal && drinkKcal>0
-        ? `<div class="muted" style="font-size:12px;margin-top:3px;">incl. ${fmt(drinkKcal,0)} kcal from drink sugar</div>` : "";
+      const bits = [];
+      if (n.key==="calories" && foodKcal>0) bits.push(`${fmt(foodKcal,0)} from food`);
+      if (n.key==="calories" && drinkKcal>0) bits.push(`${fmt(drinkKcal,0)} from drink sugar`);
+      const sub = bits.length ? `<div class="muted" style="font-size:12px;margin-top:3px;">incl. ${bits.join(" · ")}</div>` : "";
       return `<div style="margin-bottom:13px;">
         <div class="row spread" style="margin-bottom:5px;">
           <span style="font-weight:600;">${n.lab}</span>
-          <span style="font-variant-numeric:tabular-nums;">${fmt(val, isCal?0:1)}${target?` <span class="muted">/ ${fmt(target,0)} ${n.unit}</span>`:` ${n.unit}`}
+          <span style="font-variant-numeric:tabular-nums;">${fmt(val, n.key==="calories"?0:1)}${target?` <span class="muted">/ ${fmt(target,0)} ${n.unit}</span>`:` ${n.unit}`}
             ${has&&target?`<span class="pill ${cls}" style="margin-left:6px;">${n.limit?(val>target?"Over":"OK"):(val>=target?"Met":"Under")}</span>`:""}</span>
         </div>
         <div class="bar"><i style="width:${pct}%;background:${barCol};"></i></div>
@@ -1805,10 +1845,25 @@ SCREENS.nutrition = {
     return `
       ${dateBar("nutrition")}
       <div class="card">
-        <div class="row spread"><h3>${d===todayISO()?"Today’s":"Daily"} totals</h3>
-          <button class="btn sm primary" onclick="openNutritionSheet()">${log?"Edit":"Log totals"}</button></div>
-        ${hasAny ? rows : `<div class="empty"><span class="big">🍽️</span>No nutrition logged for this day.</div>`}
-        ${log&&log.notes?`<p class="hint" style="margin-top:6px;">📝 ${esc(log.notes)}</p>`:""}
+        <h3>${d===todayISO()?"Today’s":"Daily"} totals</h3>
+        ${hasAny ? rows : `<div class="empty"><span class="big">🍽️</span>Nothing logged for this day yet.</div>`}
+      </div>
+
+      <div class="card flush">
+        <div class="row spread" style="padding:14px 16px 6px"><h3 style="margin:0">Foods</h3>
+          <span class="muted">${foods.length} item${foods.length===1?"":"s"}</span></div>
+        ${foods.length ? foods.map(foodEntryLine).join("") : `<div style="padding:0 16px 10px" class="hint">No individual foods logged. Scan a barcode or add one below.</div>`}
+        <div class="row wrap" style="gap:8px;padding:12px 16px 16px;">
+          <button class="btn sm primary" onclick="dayScan()">📷 Scan barcode</button>
+          <button class="btn sm ghost" onclick="dayAddFood()">＋ Add food</button>
+          <button class="btn sm ghost" onclick="openLogMealSheet()">🍱 Log meal</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row spread"><h3 style="margin:0">Manual daily total</h3>
+          <button class="btn sm ghost" onclick="openNutritionSheet()">${log?"Edit":"Add"}</button></div>
+        <p class="hint" style="margin-top:6px;">Optional catch-all if you already know the day's totals from a label or another app — added on top of any foods above.${log?` Currently ${fmt(num(log.calories),0)} kcal.`:""}</p>
       </div>
 
       <h3 class="section-h">7-day averages</h3>
@@ -2256,16 +2311,12 @@ function trendCharts(){
   }
 
   if (TREND_CAT==="nutrition"){
-    const get = d=>getNutrition(d);
     const line = (key,lab,col)=> buildChart(lab, "", dates.map(shortDate),
-      [{name:lab,color:col,type:"line",values:daily(dates,d=>{const l=get(d);return l?num(l[key],null):null;})}],
+      [{name:lab,color:col,type:"line",values:daily(dates,d=> dayHasNutrition(d) ? dayNutrient(d,key) : null)}],
       {ref: STATE.settings.nutritionTargets[key]?{value:num(STATE.settings.nutritionTargets[key]),label:"target",color:"var(--good)"}:null,
        integer: key==="calories"});
-    html += buildChart("Calories per day (kcal)","incl. drink sugar", dates.map(shortDate),
-      [{name:"Calories",color:"var(--accent)",type:"line",values:daily(dates,d=>{
-        const l=get(d); const hasDrink=hydrationSummary(d).logs.length>0;
-        return (l||hasDrink) ? totalCaloriesFor(d) : null;
-      })}],
+    html += buildChart("Calories per day (kcal)","incl. food & drink", dates.map(shortDate),
+      [{name:"Calories",color:"var(--accent)",type:"line",values:daily(dates,d=> dayHasNutrition(d) ? totalCaloriesFor(d) : null)}],
       {ref: STATE.settings.nutritionTargets.calories?{value:num(STATE.settings.nutritionTargets.calories),label:"target",color:"var(--good)"}:null,
        integer:true});
     html += line("protein","Protein per day (g)","#30d158");
@@ -2374,10 +2425,22 @@ const EXPORT_CATS = [
   { key:"hydration", lab:"Hydration",         rows:()=>STATE.hydrationLogs,       json:()=>STATE.hydrationLogs },
   { key:"drinks",    lab:"Drink database",    rows:()=>STATE.drinkDatabase,       json:()=>STATE.drinkDatabase },
   { key:"nutrition", lab:"Nutrition",         rows:()=>STATE.nutritionLogs,       json:()=>STATE.nutritionLogs },
+  { key:"foods",     lab:"Foods (itemised)",  rows:()=>foodRows(),                json:()=>STATE.foodLogs },
+  { key:"meals",     lab:"Meals / recipes",   rows:()=>mealItemRows(),            json:()=>STATE.meals },
   { key:"body",      lab:"Body composition",  rows:()=>STATE.bodyCompositionLogs, json:()=>STATE.bodyCompositionLogs },
   { key:"teeth",     lab:"Teeth brushing",    rows:()=>STATE.brushingLogs,        json:()=>STATE.brushingLogs },
   { key:"settings",  lab:"Settings",          rows:()=>[flattenSettings()],       json:()=>STATE.settings }
 ];
+function foodRows(){ return STATE.foodLogs.map(f=>{ const o={}; Object.keys(f).forEach(k=>{ if(k!=="per100") o[k]=f[k]; }); return o; }); }
+function mealItemRows(){
+  const rows=[];
+  STATE.meals.forEach(m=>(m.items||[]).forEach(it=>rows.push({
+    meal:m.name, item:it.name, amountG:it.amountG, barcode:it.barcode||"",
+    calories:it.calories, protein:it.protein, carbs:it.carbs, fat:it.fat,
+    satFat:it.satFat, sugar:it.sugar, fibre:it.fibre, salt:it.salt
+  })));
+  return rows;
+}
 
 function dataSummary(){
   const dates = new Set(allDataDates());
@@ -2387,8 +2450,11 @@ function dataSummary(){
   // average hydration over logged days
   const hyDays = [...new Set(STATE.hydrationLogs.map(l=>l.date))];
   const avgHy = hyDays.length ? hyDays.reduce((s,d)=>s+hydrationSummary(d).effective,0)/hyDays.length : 0;
-  const nut = STATE.nutritionLogs.filter(l=>l.calories!=null);
-  const avgCal = nut.length ? nut.reduce((s,l)=>s+totalCaloriesFor(l.date),0)/nut.length : 0;
+  const nutDates = new Set();
+  STATE.nutritionLogs.forEach(l=>nutDates.add(l.date));
+  STATE.foodLogs.forEach(f=>nutDates.add(f.date));
+  const nutArr = [...nutDates].filter(d=>totalCaloriesFor(d)>0);
+  const avgCal = nutArr.length ? nutArr.reduce((s,d)=>s+totalCaloriesFor(d),0)/nutArr.length : 0;
   const lb = latestBody();
   const brushDays = [...new Set(STATE.brushingLogs.map(l=>l.date))];
   const fullBrush = brushDays.filter(d=>getBrushing(d,"morning")?.done && getBrushing(d,"evening")?.done).length;
@@ -2676,8 +2742,351 @@ async function syncPushNow(){
 }
 
 /* =====================================================================
-   BOOT
+   SECTION 9 — BARCODE FOOD LOGGING + MEALS  (Open Food Facts)
    ===================================================================== */
+const OFF_FIELDS = "product_name,product_name_en,brands,quantity,serving_size,serving_quantity,nutriments";
+const FOOD_NUTRIENTS = ["calories","protein","carbs","fat","satFat","sugar","fibre","salt"];
+let PROD = null;                 // product currently being added
+let ADD_TARGET = { kind:"day" }; // where a new food goes: the day, or a meal being built
+let EDIT_MEAL = null;            // meal id open in the builder
+
+/* ---- Open Food Facts lookup ---- */
+async function offLookup(barcode){
+  const code = String(barcode||"").trim();
+  if (!/^\d{6,14}$/.test(code)) throw new Error("Enter a valid barcode (6–14 digits)");
+  const url = `https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=${OFF_FIELDS}`;
+  const ctl = (typeof AbortController!=="undefined") ? new AbortController() : null;
+  const tm = ctl ? setTimeout(()=>ctl.abort(), 12000) : null;
+  let res;
+  try { res = await fetch(url, ctl?{signal:ctl.signal}:{}); }
+  finally { if (tm) clearTimeout(tm); }
+  if (!res.ok) throw new Error("Lookup failed (HTTP "+res.status+")");
+  const data = await res.json();
+  if (!data || data.status === 0 || !data.product) return null;   // not found
+  return parseOffProduct(code, data.product);
+}
+/* Normalise an OFF product into per-100g macros we can scale. */
+function parseOffProduct(code, p){
+  const n = p.nutriments || {};
+  const per100 = {
+    calories: pickNum(n["energy-kcal_100g"], kjToKcal(n["energy_100g"])),
+    protein:  pickNum(n["proteins_100g"]),
+    carbs:    pickNum(n["carbohydrates_100g"]),
+    fat:      pickNum(n["fat_100g"]),
+    satFat:   pickNum(n["saturated-fat_100g"]),
+    sugar:    pickNum(n["sugars_100g"]),
+    fibre:    pickNum(n["fiber_100g"]),
+    salt:     pickNum(n["salt_100g"], sodiumToSalt(n["sodium_100g"]))
+  };
+  const hasPer100 = ["calories","protein","carbs","fat"].some(k => per100[k]!=null);
+  return {
+    barcode: code,
+    name: String(p.product_name || p.product_name_en || p.brands || "Unknown product").trim(),
+    brand: String(p.brands||"").split(",")[0].trim(),
+    quantity: p.quantity || "",
+    servingG: pickNum(p.serving_quantity),
+    servingSize: p.serving_size || "",
+    per100, hasPer100
+  };
+}
+function pickNum(){ for (let i=0;i<arguments.length;i++){ const v=arguments[i]; if (v!=null && v!=="" && isFinite(Number(v))) return Number(v); } return null; }
+function kjToKcal(kj){ const v=Number(kj); return (isFinite(v)&&v)?v/4.184:null; }
+function sodiumToSalt(sod){ const v=Number(sod); return (isFinite(v)&&v)?v*2.5:null; }   // salt ≈ sodium × 2.5
+function blankMacros(){ const o={}; FOOD_NUTRIENTS.forEach(k=>o[k]=0); return o; }
+/* Scale per-100g macros to grams eaten -> macros actually consumed. */
+function scaleFromPer100(per100, grams){
+  const f = num(grams)/100, out = {};
+  FOOD_NUTRIENTS.forEach(k => { out[k] = per100[k]==null ? 0 : round(per100[k]*f, k==="calories"?0:1); });
+  return out;
+}
+
+/* ---- committing a food (to the day, or to a meal being built) ---- */
+function commitFoodEntry(entry){
+  if (ADD_TARGET.kind==="meal"){
+    const m = STATE.meals.find(x=>x.id===ADD_TARGET.id);
+    if (m){ m.items.push(Object.assign({ id:uid("mi") }, entry)); m.updatedAt=Date.now(); save(); }
+    closeSheet(); navigate("mealEdit");
+  } else {
+    const d = screenDate("nutrition");
+    STATE.foodLogs.push(Object.assign({ id:uid("food"), date:d, source:"food", createdAt:Date.now() }, entry));
+    save(); closeSheet(); toast("Food added"); navigate("nutrition");
+  }
+}
+function deleteFoodEntry(id){
+  STATE.foodLogs = STATE.foodLogs.filter(f=>f.id!==id);
+  save(); toast("Removed"); navigate("nutrition");
+}
+function dayScan(){ ADD_TARGET={kind:"day"}; openScanSheet(); }
+function dayAddFood(){ ADD_TARGET={kind:"day"}; openFoodItemSheet(); }
+
+/* ---- barcode scanner (html5-qrcode, lazy-loaded from CDN) ---- */
+const QR_LIB = "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js";
+let SCANNER = null;
+function loadScannerLib(){
+  return new Promise((resolve, reject) => {
+    if (window.Html5Qrcode) return resolve();
+    const s = document.createElement("script");
+    s.src = QR_LIB; s.async = true;
+    s.onload = () => window.Html5Qrcode ? resolve() : reject(new Error("scanner unavailable"));
+    s.onerror = () => reject(new Error("couldn't load scanner (offline?)"));
+    document.head.appendChild(s);
+  });
+}
+async function stopScanner(){
+  if (SCANNER){
+    try { await SCANNER.stop(); } catch(e){}
+    try { await SCANNER.clear(); } catch(e){}
+    SCANNER = null;
+  }
+}
+function openScanSheet(){
+  const canCamera = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  openSheet(`
+    <h3>Scan a barcode</h3>
+    <div id="scanReader" style="width:100%;${canCamera?"min-height:240px;":""}border-radius:12px;overflow:hidden;margin-bottom:10px;${canCamera?"background:#000;":""}"></div>
+    <div id="scanMsg" class="hint" style="margin-bottom:10px;">${canCamera?"Point the camera at the product barcode.":"Camera unavailable here — type the number below."}</div>
+    <label class="field"><span>Or enter the barcode</span>
+      <input class="input" id="scanManual" type="text" inputmode="numeric" placeholder="e.g. 5000159407236"></label>
+    <button class="btn primary full" onclick="lookupFromInput()">Look up</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+  `);
+  SHEET_CLEANUP = stopScanner;
+  if (canCamera) startScanner();
+}
+async function startScanner(){
+  const msg = $("#scanMsg");
+  try {
+    await loadScannerLib();
+    const F = window.Html5QrcodeSupportedFormats, cfg = { fps:10, qrbox:{ width:240, height:140 } };
+    if (F) cfg.formatsToSupport = [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.ITF];
+    SCANNER = new window.Html5Qrcode("scanReader", { verbose:false });
+    await SCANNER.start({ facingMode:"environment" }, cfg, onScan, () => {});
+  } catch(e){
+    if ($("#scanMsg")) $("#scanMsg").textContent = "Couldn't start the camera — enter the barcode manually. ("+(e.message||e)+")";
+  }
+}
+function onScan(text){
+  const code = String(text||"").replace(/\D/g,"");
+  if (!code) return;
+  if ($("#scanManual")) $("#scanManual").value = code;
+  stopScanner();
+  lookupBarcode(code);
+}
+function lookupFromInput(){
+  const v = (($("#scanManual") && $("#scanManual").value) || "").replace(/\D/g,"");
+  if (!v){ toast("Enter a barcode"); return; }
+  stopScanner();
+  lookupBarcode(v);
+}
+async function lookupBarcode(code){
+  openSheet(`<h3>Looking up…</h3><div class="empty"><span class="big">🔎</span>Checking Open Food Facts for ${esc(code)}…</div>`);
+  try {
+    const prod = await offLookup(code);
+    if (!prod){ openProductNotFound(code); return; }
+    openProductForm(prod);
+  } catch(e){
+    openSheet(`<h3>Lookup failed</h3>
+      <p class="hint" style="margin-bottom:12px;">${esc(e.message||String(e))}</p>
+      <button class="btn primary full" onclick="openProductNotFound('${esc(code)}')">Enter manually</button>
+      <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Close</button>`);
+  }
+}
+
+/* ---- product form (found) ---- */
+function openProductForm(prod){
+  PROD = prod;
+  const startG = prod.servingG || 100;
+  const scaled = prod.hasPer100 ? scaleFromPer100(prod.per100, startG) : blankMacros();
+  const p100 = prod.per100 || {};
+  const dest = ADD_TARGET.kind==="meal" ? "meal" : prettyDate(screenDate("nutrition"));
+  openSheet(`
+    <h3>${esc(prod.name)}</h3>
+    ${prod.brand?`<p class="hint" style="margin-top:-4px;">${esc(prod.brand)}${prod.quantity?` · ${esc(prod.quantity)}`:""}</p>`:""}
+    ${prod.hasPer100
+      ? `<p class="hint" style="margin:6px 0 12px;">Per 100 g: ${fmt(p100.calories||0,0)} kcal · P${fmt(p100.protein||0,1)} C${fmt(p100.carbs||0,1)} F${fmt(p100.fat||0,1)}${prod.servingG?` · serving ${fmt(prod.servingG,0)} g`:""}</p>`
+      : `<p class="hint" style="margin:6px 0 12px;">No per-100g data from Open Food Facts — enter the macros for the amount you ate.</p>`}
+    <label class="field"><span>Amount eaten (g)</span>
+      <input class="input" id="pfAmt" type="number" inputmode="decimal" value="${fmt(startG,0)}" oninput="recalcMacros()"></label>
+    ${prod.servingG?`<div class="row wrap" style="gap:6px;margin:-4px 0 10px;">
+      <button class="btn sm ghost" onclick="setAmt(${prod.servingG})">1 serving</button>
+      <button class="btn sm ghost" onclick="setAmt(${prod.servingG*2})">2 servings</button>
+      <button class="btn sm ghost" onclick="setAmt(100)">100 g</button></div>`:""}
+    <div class="serv-grid">
+      ${FOOD_NUTRIENTS.map(k=>{ const meta=NUTRIENTS.find(n=>n.key===k);
+        return `<label class="field"><span>${meta.lab} (${meta.unit})</span>
+          <input class="input" id="pf_${k}" type="number" inputmode="decimal" value="${fmt(scaled[k]||0, k==="calories"?0:1)}"></label>`;
+      }).join("")}
+    </div>
+    <label class="field"><span>Name</span><input class="input" id="pfName" type="text" value="${esc(prod.name)}"></label>
+    <button class="btn primary full" onclick="saveProductEntry()">Add to ${esc(dest)}</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+  `);
+}
+function setAmt(g){ const a=$("#pfAmt"); if(a){ a.value=fmt(g,0); recalcMacros(); } }
+function recalcMacros(){
+  if (!PROD || !PROD.hasPer100) return;           // manual macros: leave as typed
+  const scaled = scaleFromPer100(PROD.per100, num($("#pfAmt").value));
+  FOOD_NUTRIENTS.forEach(k => { const el=$("#pf_"+k); if(el) el.value = fmt(scaled[k]||0, k==="calories"?0:1); });
+}
+function saveProductEntry(){
+  const gEl = $("#pfAmt");
+  const grams = (gEl && gEl.value!=="") ? num(gEl.value) : null;
+  const entry = {
+    name: (($("#pfName")&&$("#pfName").value) || (PROD&&PROD.name) || "Food").trim(),
+    barcode: PROD?PROD.barcode:null,
+    amountG: grams, basis:"food",
+    per100: (PROD&&PROD.hasPer100) ? PROD.per100 : null
+  };
+  FOOD_NUTRIENTS.forEach(k => { entry[k] = num($("#pf_"+k)&&$("#pf_"+k).value); });
+  commitFoodEntry(entry);
+}
+
+/* ---- manual entry / not found / edit existing ---- */
+function openProductNotFound(code){
+  PROD = { barcode: code||null, name:"", hasPer100:false, per100:{}, servingG:null };
+  const dest = ADD_TARGET.kind==="meal" ? "meal" : prettyDate(screenDate("nutrition"));
+  openSheet(`
+    <h3>Product not found</h3>
+    <p class="hint" style="margin-bottom:12px;">${code?`No match for ${esc(code)}. `:""}Enter the food and the macros for the amount you ate.</p>
+    <label class="field"><span>Name</span><input class="input" id="pfName" type="text" placeholder="e.g. Porridge"></label>
+    <label class="field"><span>Amount eaten (g, optional)</span><input class="input" id="pfAmt" type="number" inputmode="decimal"></label>
+    <div class="serv-grid">
+      ${FOOD_NUTRIENTS.map(k=>{ const meta=NUTRIENTS.find(n=>n.key===k);
+        return `<label class="field"><span>${meta.lab} (${meta.unit})</span>
+          <input class="input" id="pf_${k}" type="number" inputmode="decimal" placeholder="0"></label>`;
+      }).join("")}
+    </div>
+    <button class="btn primary full" onclick="saveProductEntry()">Add to ${esc(dest)}</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+  `);
+}
+function openFoodItemSheet(id){
+  const f = id ? STATE.foodLogs.find(x=>x.id===id) : null;
+  PROD = (f && f.per100) ? { barcode:f.barcode, name:f.name, per100:f.per100, hasPer100:true, servingG:null } : null;
+  const grams = (f && f.amountG!=null) ? f.amountG : "";
+  openSheet(`
+    <h3>${f?"Edit food":"Add food"}</h3>
+    <label class="field"><span>Name</span><input class="input" id="pfName" type="text" value="${f?esc(f.name):""}" placeholder="e.g. Banana"></label>
+    <label class="field"><span>Amount (g, optional)</span>
+      <input class="input" id="pfAmt" type="number" inputmode="decimal" value="${grams!==""?esc(grams):""}" ${PROD?'oninput="recalcMacros()"':""}></label>
+    ${PROD?`<p class="hint" style="margin:-4px 0 8px;">Changing the amount rescales from the saved per-100g values.</p>`:""}
+    <div class="serv-grid">
+      ${FOOD_NUTRIENTS.map(k=>{ const meta=NUTRIENTS.find(n=>n.key===k);
+        return `<label class="field"><span>${meta.lab} (${meta.unit})</span>
+          <input class="input" id="pf_${k}" type="number" inputmode="decimal" value="${f&&f[k]!=null?esc(f[k]):""}" placeholder="0"></label>`;
+      }).join("")}
+    </div>
+    <button class="btn primary full" onclick="${f?`saveFoodEdit('${f.id}')`:"saveProductEntry()"}">${f?"Save":"Add"}</button>
+    ${f?`<button class="btn full bad ghost" style="margin-top:8px;" onclick="deleteFoodEntry('${f.id}')">Delete</button>`
+       :`<button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>`}
+  `);
+}
+function saveFoodEdit(id){
+  const f = STATE.foodLogs.find(x=>x.id===id); if(!f) return;
+  f.name = (($("#pfName")&&$("#pfName").value)||f.name||"Food").trim();
+  const g = $("#pfAmt").value; f.amountG = g===""?null:num(g);
+  FOOD_NUTRIENTS.forEach(k => { f[k] = num($("#pf_"+k)&&$("#pf_"+k).value); });
+  f.updatedAt = Date.now();
+  save(); closeSheet(); toast("Saved"); navigate("nutrition");
+}
+
+/* ---- meals / recipes ---- */
+function mealTotals(m){
+  const t={}; FOOD_NUTRIENTS.forEach(k=>t[k]=0);
+  (m.items||[]).forEach(it=>FOOD_NUTRIENTS.forEach(k=>{ t[k]+=num(it[k]); }));
+  return t;
+}
+function newMeal(){
+  const m = { id:uid("meal"), name:"New meal", createdAt:Date.now(), updatedAt:Date.now(), items:[] };
+  STATE.meals.push(m); EDIT_MEAL=m.id; ADD_TARGET={kind:"day"}; save(); closeSheet(); navigate("mealEdit");
+}
+function editMeal(id){ EDIT_MEAL=id; navigate("mealEdit"); }
+function deleteMeal(id){ STATE.meals = STATE.meals.filter(m=>m.id!==id); save(); toast("Meal deleted"); navigate("meals"); }
+function renameMeal(){ const m=STATE.meals.find(x=>x.id===EDIT_MEAL); if(!m)return; m.name=($("#mealName").value||"").trim()||"Meal"; m.updatedAt=Date.now(); save(); }
+function deleteMealItem(id){ const m=STATE.meals.find(x=>x.id===EDIT_MEAL); if(!m)return; m.items=m.items.filter(i=>i.id!==id); m.updatedAt=Date.now(); save(); navigate("mealEdit"); }
+function mealScan(){ ADD_TARGET={kind:"meal", id:EDIT_MEAL}; openScanSheet(); }
+function mealAddFood(){ ADD_TARGET={kind:"meal", id:EDIT_MEAL}; openFoodItemSheet(); }
+function logMeal(mealId){
+  const m = STATE.meals.find(x=>x.id===mealId); if(!m) return;
+  const t = mealTotals(m), d = screenDate("nutrition");
+  STATE.foodLogs.push(Object.assign({ id:uid("food"), date:d, source:"food", createdAt:Date.now(),
+    name:m.name||"Meal", basis:"meal", amountG:null, per100:null, mealId:m.id }, t));
+  save(); closeSheet(); toast("Meal logged"); navigate("nutrition");
+}
+function openLogMealSheet(){
+  const meals = STATE.meals.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  openSheet(`
+    <h3>Log a meal</h3>
+    ${meals.length ? meals.map(m=>{ const t=mealTotals(m);
+      return `<div class="list-item">
+        <div class="li-ic">🍱</div>
+        <div class="li-main"><div class="li-title">${esc(m.name||"Meal")}</div>
+          <div class="li-sub">${(m.items||[]).length} items · ${fmt(t.calories,0)} kcal</div></div>
+        <div class="li-actions"><button class="btn sm primary" onclick="logMeal('${m.id}')">Log</button></div>
+      </div>`; }).join("")
+      : `<p class="hint" style="margin-bottom:12px;">No meals yet — create one from a set of foods to log them together.</p>`}
+    <button class="btn primary full" style="margin-top:10px;" onclick="newMeal()">＋ New meal</button>
+    ${meals.length?`<button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet();navigate('meals')">Manage meals</button>`:""}
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Close</button>
+  `);
+}
+SCREENS.meals = {
+  title:"Meals",
+  render(){
+    const meals = STATE.meals.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+    return `
+      <div class="card flush">
+        <div style="padding:14px 16px 6px"><h3 style="margin:0">Your meals</h3></div>
+        ${meals.length ? meals.map(m=>{ const t=mealTotals(m);
+          return `<div class="list-item">
+            <div class="li-ic">🍱</div>
+            <div class="li-main" style="cursor:pointer;" onclick="editMeal('${m.id}')">
+              <div class="li-title">${esc(m.name||"Meal")}</div>
+              <div class="li-sub">${(m.items||[]).length} items · ${fmt(t.calories,0)} kcal · P${fmt(t.protein,0)} C${fmt(t.carbs,0)} F${fmt(t.fat,0)}</div></div>
+            <div class="li-actions">
+              <button class="iconbtn" onclick="editMeal('${m.id}')">✎</button>
+              <button class="iconbtn" onclick="deleteMeal('${m.id}')">🗑️</button></div>
+          </div>`; }).join("")
+          : `<div style="padding:0 16px 12px" class="hint">No meals yet.</div>`}
+        <div style="padding:12px 16px 16px"><button class="btn sm primary" onclick="newMeal()">＋ New meal</button></div>
+      </div>
+      <button class="btn ghost full" onclick="navigate('nutrition')">Back to nutrition</button>
+    `;
+  }
+};
+SCREENS.mealEdit = {
+  title:"Edit meal",
+  render(){
+    const m = STATE.meals.find(x=>x.id===EDIT_MEAL);
+    if (!m) return `<div class="empty"><span class="big">🍱</span>Meal not found.</div><button class="btn ghost full" onclick="navigate('meals')">Back to meals</button>`;
+    const t = mealTotals(m);
+    return `
+      <div class="card">
+        <label class="field"><span>Meal name</span>
+          <input class="input" id="mealName" type="text" value="${esc(m.name||"")}" onchange="renameMeal()"></label>
+        <div class="kv"><span class="k">Total</span><span class="v">${fmt(t.calories,0)} kcal · P${fmt(t.protein,1)} C${fmt(t.carbs,1)} F${fmt(t.fat,1)}</span></div>
+      </div>
+      <div class="card flush">
+        <div style="padding:14px 16px 6px"><h3 style="margin:0">Items</h3></div>
+        ${(m.items||[]).length ? m.items.map(it=>`
+          <div class="list-item">
+            <div class="li-ic">${it.barcode?"🥫":"🍎"}</div>
+            <div class="li-main"><div class="li-title">${esc(it.name||"Food")}</div>
+              <div class="li-sub">${it.amountG!=null?fmt(it.amountG,0)+" g · ":""}${fmt(num(it.calories),0)} kcal</div></div>
+            <div class="li-actions"><button class="iconbtn" onclick="deleteMealItem('${it.id}')">🗑️</button></div>
+          </div>`).join("")
+          : `<div style="padding:0 16px 10px" class="hint">No items yet. Add foods to build the meal.</div>`}
+        <div class="row wrap" style="gap:8px;padding:12px 16px 16px;">
+          <button class="btn sm primary" onclick="mealScan()">📷 Scan</button>
+          <button class="btn sm ghost" onclick="mealAddFood()">＋ Add food</button>
+        </div>
+      </div>
+      <button class="btn ghost full" onclick="ADD_TARGET={kind:'day'};navigate('meals')">Done</button>
+    `;
+  }
+};
+
+
 (async function boot(){
   try { await loadState(); }
   catch(e){ console.warn("Load failed, using defaults", e); STATE = defaultState(); }
