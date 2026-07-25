@@ -3,57 +3,78 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#000000">
-<title>Daily — Health Tracker</title>
+<meta name="theme-color" content="#090B10">
+<title>Daily</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 /* =========================================================================
-   THEME TOKENS
+   DAILY — visual system
+   Direction: a backlit instrument panel. Cool ink surfaces, one electric
+   accent, hairline rules, tabular figures, and a five-channel meter strip
+   on the home screen that reads today at a glance like a mixing desk.
    ========================================================================= */
 :root{
-  --accent:#0a84ff;
-  --accent-soft:rgba(10,132,255,.16);
-  --hydration:#0a84ff;
-  --caffeine:#ff9f0a;
-  --sugar:#ff5fa2;
-  --alcohol:#ff453a;
-  --good:#30d158;
-  --warn:#ffd60a;
-  --bad:#ff453a;
-  --radius:20px;
-  --radius-sm:14px;
-  --gap:14px;
+  /* accent is user-selectable; --accent-soft is derived in applySettings() */
+  --accent:#6E7BFF;
+  --accent-soft:rgba(110,123,255,.16);
+
+  /* data hues — each domain keeps its own colour everywhere it appears */
+  --hydration:#3AC8F5;
+  --caffeine:#F5A524;
+  --sugar:#FF6FB5;
+  --alcohol:#FF5C5C;
+  --care:#A78BFA;
+  --good:#2FD98D;
+  --warn:#FFC94D;
+  --bad:#FF5C5C;
+
+  --radius:18px;
+  --radius-sm:12px;
+  --gap:13px;
   --tap:48px;
-  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+
+  --font:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-display:"Space Grotesk","Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   --fs-base:16px;
 }
 html[data-theme="dark"]{
-  --bg:#000000;
-  --bg-2:#0c0c0e;
-  --card:#1c1c1e;
-  --card-2:#2c2c2e;
-  --field:#1c1c1e;
-  --text:#ffffff;
-  --text-dim:#8e8e93;
-  --text-faint:#636366;
-  --border:rgba(255,255,255,.08);
-  --border-strong:rgba(255,255,255,.16);
-  --shadow:0 8px 30px rgba(0,0,0,.5);
+  --bg:#090B10;
+  --bg-2:#0F131B;
+  --card:#151A23;
+  --card-2:#1D232E;
+  --field:#11161E;
+  --track:#0E121A;
+  --dock:rgba(21,26,35,.82);
+  --glass:rgba(9,11,16,.72);
+  --text:#F2F5FA;
+  --text-dim:#98A2B8;
+  --text-faint:#6B7488;
+  --border:rgba(255,255,255,.07);
+  --border-strong:rgba(255,255,255,.14);
+  --edge:rgba(255,255,255,.06);
+  --shadow:0 12px 34px rgba(0,0,0,.44);
 }
 html[data-theme="light"]{
-  --bg:#f2f2f7;
-  --bg-2:#e8e8ed;
-  --card:#ffffff;
-  --card-2:#f2f2f7;
-  --field:#ffffff;
-  --text:#1c1c1e;
-  --text-dim:#6c6c70;
-  --text-faint:#9a9a9e;
-  --border:rgba(0,0,0,.08);
-  --border-strong:rgba(0,0,0,.14);
-  --shadow:0 8px 30px rgba(0,0,0,.12);
+  --bg:#F5F7FB;
+  --bg-2:#ECEFF5;
+  --card:#FFFFFF;
+  --card-2:#F3F6FB;
+  --field:#FFFFFF;
+  --track:#E7ECF4;
+  --dock:rgba(255,255,255,.86);
+  --glass:rgba(245,247,251,.78);
+  --text:#0F131A;
+  --text-dim:#5B6478;
+  --text-faint:#8C94A6;
+  --border:rgba(15,19,26,.09);
+  --border-strong:rgba(15,19,26,.16);
+  --edge:rgba(255,255,255,.9);
+  --shadow:0 10px 28px rgba(15,19,26,.09);
 }
 html[data-large="true"]{ --fs-base:18px; }
-html[data-compact="true"]{ --gap:9px; --radius:16px; }
+html[data-compact="true"]{ --gap:9px; --radius:15px; }
 
 *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html,body{ margin:0; padding:0; }
@@ -62,68 +83,88 @@ body{
   font-size:var(--fs-base);
   background:var(--bg);
   color:var(--text);
-  line-height:1.4;
+  line-height:1.42;
   overflow-x:hidden;
   -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
   transition:background .3s ease,color .3s ease;
   min-height:100vh;
 }
 button{ font-family:inherit; font-size:inherit; cursor:pointer; color:inherit; }
-input,select,textarea{ font-family:inherit; font-size:1rem; }
+input,select,textarea{ font-family:inherit; font-size:1rem; color:var(--text); }
 input[type=number]{ -moz-appearance:textfield; }
 input[type=number]::-webkit-outer-spin-button,
 input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
+
+/* every figure in the app lines up in columns */
+.stat-big,.desk-score,.ch-val,.kv .v,.metric .m-val,.timer .tdisp,.cd-num,.set-table input,
+.tt-row input,.trend,.m-chg{ font-variant-numeric:tabular-nums; }
 
 /* =========================================================================
-   APP FRAME
+   FRAME
    ========================================================================= */
 #app{
-  max-width:520px;
-  margin:0 auto;
-  min-height:100vh;
-  position:relative;
-  padding:calc(env(safe-area-inset-top) + 8px) 16px calc(env(safe-area-inset-bottom) + 90px);
+  max-width:520px; margin:0 auto; min-height:100vh; position:relative; z-index:1;
+  padding:0 16px calc(env(safe-area-inset-bottom) + 108px);
 }
-/* water-fill layer lives behind the hydration screen */
 #waterFill{
   position:fixed; left:0; right:0; bottom:0; height:0%;
-  background:linear-gradient(180deg, rgba(10,132,255,.42), rgba(10,132,255,.62));
-  z-index:0; pointer-events:none; transition:height .7s cubic-bezier(.22,1,.36,1);
-  opacity:0;
+  background:linear-gradient(180deg,
+    color-mix(in srgb, var(--hydration) 26%, transparent),
+    color-mix(in srgb, var(--hydration) 46%, transparent));
+  z-index:0; pointer-events:none; transition:height .8s cubic-bezier(.22,1,.36,1); opacity:0;
 }
 #waterFill::before{
-  content:""; position:absolute; top:-18px; left:0; right:0; height:22px;
-  background:radial-gradient(ellipse at 50% 100%, rgba(10,132,255,.55), transparent 70%);
+  content:""; position:absolute; top:-20px; left:0; right:0; height:24px;
+  background:radial-gradient(ellipse at 50% 100%, color-mix(in srgb, var(--hydration) 42%, transparent), transparent 72%);
 }
 body.hydration-active #waterFill{ opacity:1; }
-#app{ position:relative; z-index:1; }
 
 /* =========================================================================
    HEADER
    ========================================================================= */
 .topbar{
-  display:flex; align-items:center; gap:10px; min-height:44px; margin-bottom:10px;
+  position:sticky; top:0; z-index:30;
+  display:flex; align-items:flex-end; gap:10px;
+  margin:0 -16px 4px;
+  padding:calc(env(safe-area-inset-top) + 14px) 16px 12px;
+  background:var(--glass); backdrop-filter:blur(16px) saturate(150%);
 }
-.topbar h1{ font-size:1.9rem; font-weight:800; letter-spacing:-.03em; margin:0; flex:1; }
-.topbar .sub{ font-size:.82rem; color:var(--text-dim); font-weight:500; }
+.topbar .ttl-wrap{ flex:1; min-width:0; }
+.topbar h1{
+  font-family:var(--font-display); font-size:1.75rem; font-weight:700;
+  letter-spacing:-.035em; margin:1px 0 0; line-height:1.05;
+}
+.topbar .sub{ font-size:.8rem; color:var(--text-dim); font-weight:500; }
+.eyebrow{
+  font-size:.62rem; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--text-faint);
+}
 .back-btn{
-  display:none; align-items:center; gap:4px; background:none; border:none;
-  color:var(--accent); font-size:1.05rem; font-weight:600; padding:6px 4px 6px 0; margin-left:-4px;
+  display:none; align-items:center; gap:3px; background:none; border:none;
+  color:var(--accent); font-size:.95rem; font-weight:600; padding:6px 4px 8px 0; margin-left:-4px;
 }
-.back-btn svg{ width:20px; height:20px; }
-.screen-title{ font-size:1.5rem; font-weight:800; letter-spacing:-.02em; margin:2px 0 14px; }
-.screen-date{ font-size:.85rem; color:var(--text-dim); font-weight:500; margin-top:-10px; margin-bottom:14px; }
+.back-btn svg{ width:19px; height:19px; }
+.screen-title{ font-family:var(--font-display); font-size:1.45rem; font-weight:700; letter-spacing:-.025em; margin:2px 0 14px; }
+.screen-date{ font-size:.82rem; color:var(--text-dim); font-weight:500; margin:0 0 14px; }
 
 /* =========================================================================
-   CARDS / LAYOUT
+   SURFACES
    ========================================================================= */
 .card{
-  background:var(--card); border-radius:var(--radius); padding:16px; margin-bottom:var(--gap);
+  position:relative; background:var(--card); border-radius:var(--radius);
+  padding:16px; margin-bottom:var(--gap);
   border:1px solid var(--border); box-shadow:var(--shadow);
 }
+/* a 1px lit edge along the top — reads as backlit hardware */
+.card::before,.desk::before,.tile::before{
+  content:""; position:absolute; left:14px; right:14px; top:0; height:1px;
+  background:linear-gradient(90deg, transparent, var(--edge), transparent); pointer-events:none;
+}
 .card.flush{ padding:0; overflow:hidden; }
-.card h3{ margin:0 0 10px; font-size:1.05rem; font-weight:700; letter-spacing:-.01em; }
-.card .hint{ color:var(--text-dim); font-size:.82rem; }
+.card h3{ font-family:var(--font-display); margin:0 0 11px; font-size:1rem; font-weight:600; letter-spacing:-.015em; }
+.card .hint{ color:var(--text-dim); font-size:.81rem; }
 .muted{ color:var(--text-dim); }
 .faint{ color:var(--text-faint); }
 .row{ display:flex; gap:10px; align-items:center; }
@@ -132,248 +173,351 @@ body.hydration-active #waterFill{ opacity:1; }
 .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:var(--gap); }
 .grid3{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
 .spacer{ height:6px; }
-.divider{ height:1px; background:var(--border); margin:12px 0; }
+.divider{ height:1px; background:var(--border); margin:13px 0; }
+.section-h{
+  font-family:var(--font-display); font-size:.7rem; font-weight:600;
+  letter-spacing:.12em; text-transform:uppercase; color:var(--text-faint);
+  margin:22px 2px 10px; display:flex; align-items:center; gap:9px;
+}
+.section-h::after{ content:""; flex:1; height:1px; background:var(--border); }
+.hint{ color:var(--text-dim); font-size:.81rem; }
 
 /* =========================================================================
-   HOME GRID
+   SIGNATURE — the desk: five channels reading today at a glance
+   ========================================================================= */
+.desk{
+  position:relative; background:var(--card); border:1px solid var(--border);
+  border-radius:var(--radius); padding:15px 14px 13px; margin-bottom:var(--gap);
+  box-shadow:var(--shadow); overflow:hidden;
+}
+.desk-head{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin:0 2px 13px; }
+.desk-score{ font-family:var(--font-display); font-size:1.45rem; font-weight:700; letter-spacing:-.035em; line-height:1; }
+.desk-score small{ font-size:.6rem; font-weight:600; color:var(--text-faint); letter-spacing:.08em; margin-left:3px; }
+.desk-strip{ display:grid; grid-template-columns:repeat(5,1fr); gap:7px; align-items:end; }
+.ch{ background:none; border:none; padding:0; display:flex; flex-direction:column; align-items:center; gap:7px; }
+.ch-track{
+  position:relative; width:100%; height:78px; border-radius:11px;
+  background:var(--track); border:1px solid var(--border); overflow:hidden;
+}
+/* faint scale lines, like a level meter */
+.ch-track::after{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:repeating-linear-gradient(to top, transparent 0 14px, var(--border) 14px 15px);
+}
+.ch-fill{
+  position:absolute; left:0; right:0; bottom:0; display:block; height:0;
+  border-radius:10px; transition:height .85s cubic-bezier(.22,1,.36,1);
+}
+.ch-val{ font-family:var(--font-display); font-size:.78rem; font-weight:600; line-height:1; }
+.ch-lab{ font-size:.55rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faint); }
+.ch:active .ch-track{ border-color:var(--border-strong); }
+
+/* =========================================================================
+   HOME TILES
    ========================================================================= */
 .home-grid{ display:grid; grid-template-columns:1fr 1fr; gap:var(--gap); }
 .tile{
-  position:relative; background:var(--card); border:1px solid var(--border);
-  border-radius:var(--radius); padding:16px; text-align:left; min-height:104px;
-  display:flex; flex-direction:column; justify-content:space-between; box-shadow:var(--shadow);
-  transition:transform .12s ease, background .2s ease;
+  position:relative; overflow:hidden; background:var(--card); border:1px solid var(--border);
+  border-radius:var(--radius); padding:15px; text-align:left; min-height:106px;
+  display:flex; flex-direction:column; justify-content:space-between; gap:10px;
+  box-shadow:var(--shadow); transition:transform .13s ease, border-color .2s ease;
 }
-.tile:active{ transform:scale(.97); }
-.tile .ic{ font-size:1.7rem; line-height:1; }
-.tile .nm{ font-weight:700; font-size:1.02rem; letter-spacing:-.01em; }
-.tile .meta{ font-size:.78rem; color:var(--text-dim); margin-top:2px; min-height:1.1em; }
-.tile .badge-dot{ position:absolute; top:14px; right:14px; width:9px; height:9px; border-radius:50%; }
+.tile:active{ transform:scale(.975); border-color:var(--border-strong); }
+.tile .ic{
+  font-size:1.05rem; line-height:1; width:34px; height:34px; border-radius:11px;
+  display:inline-flex; align-items:center; justify-content:center;
+  background:var(--card-2); border:1px solid var(--border);
+}
+.tile .nm{ font-family:var(--font-display); font-weight:600; font-size:.97rem; letter-spacing:-.015em; }
+.tile .meta{ font-size:.76rem; color:var(--text-dim); margin-top:3px; min-height:1.1em; }
+.tile .badge-dot{ position:absolute; top:15px; right:15px; width:8px; height:8px; border-radius:50%; }
 
 /* =========================================================================
    BUTTONS
    ========================================================================= */
 .btn{
   display:inline-flex; align-items:center; justify-content:center; gap:7px;
-  min-height:var(--tap); padding:0 16px; border-radius:13px; border:1px solid var(--border-strong);
-  background:var(--card-2); color:var(--text); font-weight:600; font-size:.95rem;
-  transition:transform .1s ease, opacity .2s ease; user-select:none;
+  min-height:var(--tap); padding:0 16px; border-radius:13px;
+  border:1px solid var(--border-strong); background:var(--card-2); color:var(--text);
+  font-weight:600; font-size:.92rem; letter-spacing:-.005em;
+  transition:transform .1s ease, opacity .2s ease, filter .2s ease; user-select:none;
 }
-.btn:active{ transform:scale(.97); }
+.btn:active{ transform:scale(.975); }
 .btn.full{ width:100%; }
-.btn.primary{ background:var(--accent); border-color:var(--accent); color:#fff; }
-.btn.good{ background:var(--good); border-color:var(--good); color:#04210d; }
-.btn.warn{ background:var(--warn); border-color:var(--warn); color:#2a2400; }
-.btn.bad{ background:var(--bad); border-color:var(--bad); color:#fff; }
-.btn.ghost{ background:transparent; }
-.btn.sm{ min-height:38px; padding:0 12px; font-size:.85rem; border-radius:10px; }
-.btn.tiny{ min-height:30px; padding:0 9px; font-size:.78rem; border-radius:8px; }
-.btn[disabled]{ opacity:.4; pointer-events:none; }
-.btn-row{ display:flex; gap:10px; flex-wrap:wrap; }
+.btn.primary{ background:var(--accent); border-color:transparent; color:#fff; box-shadow:0 6px 18px color-mix(in srgb, var(--accent) 30%, transparent); }
+.btn.good{ background:var(--good); border-color:transparent; color:#04210d; }
+.btn.warn{ background:var(--warn); border-color:transparent; color:#2a2400; }
+.btn.bad{ background:var(--bad); border-color:transparent; color:#fff; }
+.btn.ghost{ background:transparent; border-color:var(--border-strong); }
+.btn.sm{ min-height:38px; padding:0 13px; font-size:.83rem; border-radius:11px; }
+.btn.tiny{ min-height:30px; padding:0 9px; font-size:.76rem; border-radius:9px; }
+.btn[disabled]{ opacity:.38; pointer-events:none; }
+.btn-row{ display:flex; gap:9px; flex-wrap:wrap; }
 .btn-row .btn{ flex:1; min-width:0; }
 .iconbtn{
-  width:38px; height:38px; min-height:0; padding:0; border-radius:10px;
-  display:inline-flex; align-items:center; justify-content:center; background:var(--card-2);
-  border:1px solid var(--border); font-size:1.1rem;
+  width:38px; height:38px; min-height:0; padding:0; border-radius:11px;
+  display:inline-flex; align-items:center; justify-content:center;
+  background:var(--card-2); border:1px solid var(--border); font-size:1.05rem;
+  transition:transform .1s ease, border-color .2s ease;
 }
+.iconbtn:active{ transform:scale(.94); }
 
 /* =========================================================================
    FIELDS
    ========================================================================= */
 label.field{ display:block; margin-bottom:12px; }
-label.field > span{ display:block; font-size:.8rem; color:var(--text-dim); margin-bottom:5px; font-weight:600; }
+label.field > span{
+  display:block; font-size:.7rem; font-weight:600; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--text-faint); margin-bottom:6px;
+}
 .input, input.input, select.input, textarea.input{
   width:100%; background:var(--field); color:var(--text); border:1px solid var(--border-strong);
-  border-radius:12px; padding:12px 13px; min-height:var(--tap); outline:none; transition:border-color .15s ease;
+  border-radius:12px; padding:12px 13px; min-height:var(--tap); outline:none;
+  transition:border-color .15s ease, box-shadow .15s ease;
 }
-.input:focus{ border-color:var(--accent); }
+.input:focus{ border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
 textarea.input{ min-height:64px; resize:vertical; }
 .input-unit{ position:relative; }
-.input-unit .u{ position:absolute; right:13px; top:50%; transform:translateY(-50%); color:var(--text-faint); font-size:.85rem; pointer-events:none; }
+.input-unit .u{ position:absolute; right:13px; top:50%; transform:translateY(-50%); color:var(--text-faint); font-size:.84rem; pointer-events:none; }
 .input-unit input{ padding-right:46px; }
-.seg{ display:flex; background:var(--card-2); border-radius:11px; padding:3px; gap:3px; border:1px solid var(--border); }
+.field-row{ display:flex; gap:10px; align-items:flex-end; }
+.field-row .field{ flex:1; margin-bottom:0; }
+.seg{ display:flex; background:var(--card-2); border-radius:12px; padding:3px; gap:3px; border:1px solid var(--border); }
 .seg button{
-  flex:1; min-height:36px; border:none; border-radius:8px; background:transparent; color:var(--text-dim);
-  font-weight:600; font-size:.85rem;
+  flex:1; min-height:36px; border:none; border-radius:9px; background:transparent;
+  color:var(--text-dim); font-weight:600; font-size:.83rem; transition:background .18s ease, color .18s ease;
 }
 .seg button.on{ background:var(--accent); color:#fff; }
-.toggle{ width:51px; height:31px; border-radius:16px; background:var(--card-2); border:1px solid var(--border-strong); position:relative; transition:background .2s ease; flex:none; }
-.toggle .knob{ position:absolute; top:2px; left:2px; width:25px; height:25px; border-radius:50%; background:#fff; transition:left .2s ease; box-shadow:0 1px 3px rgba(0,0,0,.4); }
-.toggle.on{ background:var(--good); border-color:var(--good); }
-.toggle.on .knob{ left:23px; }
+.toggle{
+  width:50px; height:30px; border-radius:15px; background:var(--card-2);
+  border:1px solid var(--border-strong); position:relative; transition:background .22s ease, border-color .22s ease; flex:none;
+}
+.toggle .knob{
+  position:absolute; top:2px; left:2px; width:24px; height:24px; border-radius:50%;
+  background:#fff; transition:left .22s cubic-bezier(.3,1.4,.5,1); box-shadow:0 1px 4px rgba(0,0,0,.35);
+}
+.toggle.on{ background:var(--good); border-color:transparent; }
+.toggle.on .knob{ left:22px; }
 
 /* =========================================================================
-   PROGRESS / STATS
+   STATS / PROGRESS
    ========================================================================= */
-.stat-big{ font-size:2.1rem; font-weight:800; letter-spacing:-.03em; line-height:1; }
-.stat-label{ font-size:.78rem; color:var(--text-dim); font-weight:600; }
-.bar{ height:9px; background:var(--card-2); border-radius:6px; overflow:hidden; }
-.bar > i{ display:block; height:100%; border-radius:6px; background:var(--accent); transition:width .5s ease; }
+.stat-big{ font-family:var(--font-display); font-size:1.95rem; font-weight:700; letter-spacing:-.04em; line-height:1; }
+.stat-label{ font-size:.7rem; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:var(--text-faint); margin-top:5px; }
+.bar{ height:8px; background:var(--track); border-radius:5px; overflow:hidden; border:1px solid var(--border); }
+.bar > i, .bar > .fillb{ display:block; height:100%; border-radius:5px; background:var(--accent); transition:width .6s cubic-bezier(.22,1,.36,1); }
+.meter{ height:10px; background:var(--track); border-radius:6px; overflow:hidden; border:1px solid var(--border); }
+.meter > i{ display:block; height:100%; border-radius:6px; background:var(--accent); transition:width .6s cubic-bezier(.22,1,.36,1); }
 .ring{ display:inline-grid; place-items:center; }
 .chips{ display:flex; gap:7px; flex-wrap:wrap; }
-.chip{ font-size:.72rem; font-weight:700; padding:4px 9px; border-radius:20px; background:var(--card-2); border:1px solid var(--border); }
+.chip{ font-size:.71rem; font-weight:600; padding:4px 10px; border-radius:20px; background:var(--card-2); border:1px solid var(--border); }
 .chip.blue{ color:var(--hydration); } .chip.orange{ color:var(--caffeine); }
 .chip.pink{ color:var(--sugar); } .chip.red{ color:var(--alcohol); }
-.pill{ font-size:.7rem; font-weight:700; padding:3px 8px; border-radius:7px; letter-spacing:.02em; }
-.pill.good{ background:rgba(48,209,88,.16); color:var(--good); }
-.pill.warn{ background:rgba(255,214,10,.16); color:var(--warn); }
-.pill.bad{ background:rgba(255,69,58,.16); color:var(--bad); }
+.pill{ font-size:.68rem; font-weight:600; padding:4px 9px; border-radius:8px; letter-spacing:.01em; white-space:nowrap; }
+.pill.good{ background:color-mix(in srgb, var(--good) 15%, transparent); color:var(--good); }
+.pill.warn{ background:color-mix(in srgb, var(--warn) 16%, transparent); color:var(--warn); }
+.pill.bad{ background:color-mix(in srgb, var(--bad) 15%, transparent); color:var(--bad); }
 .pill.neutral{ background:var(--card-2); color:var(--text-dim); }
-.trend{ font-size:.85rem; font-weight:700; }
+.trend{ font-size:.84rem; font-weight:600; }
 .trend.up{ color:var(--good); } .trend.down{ color:var(--bad); } .trend.flat{ color:var(--text-dim); }
+.tgt-box{
+  background:var(--accent-soft); border:1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  border-radius:14px; padding:13px 15px; margin-bottom:14px;
+}
+.tgt-box .tgt-lab{ font-size:.66rem; color:var(--accent); font-weight:700; text-transform:uppercase; letter-spacing:.11em; }
+.tgt-box .tgt-val{ font-family:var(--font-display); font-size:1.2rem; font-weight:600; margin-top:4px; }
+.warnbox{
+  background:color-mix(in srgb, var(--warn) 11%, transparent);
+  border:1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+  color:var(--warn); border-radius:13px; padding:11px 14px; font-size:.85rem; font-weight:500; margin-bottom:14px;
+}
+.label-sm{ font-size:.7rem; color:var(--text-faint); font-weight:600; letter-spacing:.08em; text-transform:uppercase; margin-bottom:7px; }
+
+.kv{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); }
+.kv:last-child{ border-bottom:none; }
+.kv .k{ color:var(--text-dim); font-size:.86rem; }
+.kv .v{ font-weight:600; }
+
+.metric-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.metric{ background:var(--card-2); border:1px solid var(--border); border-radius:14px; padding:12px; }
+.metric .m-lab{ font-size:.64rem; color:var(--text-faint); font-weight:600; letter-spacing:.09em; text-transform:uppercase; }
+.metric .m-val{ font-family:var(--font-display); font-size:1.3rem; font-weight:700; letter-spacing:-.03em; margin-top:4px; }
+.metric .m-unit{ font-size:.7rem; color:var(--text-faint); font-weight:600; }
+.metric .m-chg{ font-size:.73rem; font-weight:600; margin-top:3px; }
+.m-chg.up{ color:var(--good); } .m-chg.down{ color:var(--bad); } .m-chg.flat{ color:var(--text-faint); }
+.m-chg.up.inv{ color:var(--bad); } .m-chg.down.inv{ color:var(--good); }
+.summary-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.summary-grid .metric .m-val{ font-size:1.15rem; }
 
 /* =========================================================================
    LISTS
    ========================================================================= */
-.list-item{ display:flex; align-items:center; gap:12px; padding:12px 14px; border-bottom:1px solid var(--border); }
+.list-item{ display:flex; align-items:center; gap:12px; padding:12px 15px; border-bottom:1px solid var(--border); }
 .list-item:last-child{ border-bottom:none; }
-.list-item .li-ic{ font-size:1.3rem; width:30px; text-align:center; flex:none; }
+.list-item .li-ic{ font-size:1.2rem; width:28px; text-align:center; flex:none; }
 .list-item .li-main{ flex:1; min-width:0; }
-.list-item .li-title{ font-weight:600; font-size:.95rem; }
-.list-item .li-sub{ font-size:.78rem; color:var(--text-dim); }
+.list-item .li-title{ font-weight:600; font-size:.93rem; letter-spacing:-.005em; }
+.list-item .li-sub{ font-size:.77rem; color:var(--text-dim); margin-top:1px; }
 .list-item .li-actions{ display:flex; gap:6px; flex:none; }
-.empty{ text-align:center; color:var(--text-dim); padding:26px 12px; font-size:.9rem; }
-.empty .big{ font-size:2rem; display:block; margin-bottom:6px; opacity:.7; }
+.empty{ text-align:center; color:var(--text-dim); padding:28px 12px; font-size:.88rem; }
+.empty .big{ font-size:1.9rem; display:block; margin-bottom:8px; opacity:.55; }
+.no-data{ font-size:.81rem; color:var(--text-faint); padding:20px 0; text-align:center; }
 
 /* =========================================================================
-   DRINK GRID
+   DRINKS
    ========================================================================= */
-.cat-tabs{ display:flex; gap:8px; overflow-x:auto; padding:2px 0 8px; margin:0 -16px; padding-left:16px; padding-right:16px; -webkit-overflow-scrolling:touch; }
+.cat-tabs{ display:flex; gap:7px; overflow-x:auto; padding:2px 16px 9px; margin:0 -16px; -webkit-overflow-scrolling:touch; }
 .cat-tabs::-webkit-scrollbar{ display:none; }
-.cat-tab{ flex:none; padding:8px 14px; border-radius:20px; background:var(--card-2); border:1px solid var(--border); font-size:.85rem; font-weight:600; color:var(--text-dim); white-space:nowrap; }
-.cat-tab.on{ background:var(--accent); border-color:var(--accent); color:#fff; }
+.cat-tab{
+  flex:none; padding:8px 14px; border-radius:20px; background:var(--card-2);
+  border:1px solid var(--border); font-size:.82rem; font-weight:600; color:var(--text-dim); white-space:nowrap;
+  transition:background .18s ease, color .18s ease;
+}
+.cat-tab.on{ background:var(--accent); border-color:transparent; color:#fff; }
 .drink-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 .drink-card{
-  background:var(--card); border:1px solid var(--border); border-radius:16px; padding:13px; text-align:left;
-  display:flex; flex-direction:column; gap:3px; transition:transform .1s ease;
+  background:var(--card); border:1px solid var(--border); border-radius:15px; padding:13px; text-align:left;
+  display:flex; flex-direction:column; gap:3px; transition:transform .1s ease, border-color .2s ease;
 }
-.drink-card:active{ transform:scale(.96); }
-.drink-card .dk-ic{ font-size:1.6rem; }
-.drink-card .dk-nm{ font-weight:700; font-size:.92rem; letter-spacing:-.01em; }
-.drink-card .dk-stats{ display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; font-size:.72rem; font-weight:700; }
+.drink-card:active{ transform:scale(.97); border-color:var(--border-strong); }
+.drink-card .dk-ic{ font-size:1.45rem; }
+.drink-card .dk-nm{ font-family:var(--font-display); font-weight:600; font-size:.9rem; letter-spacing:-.015em; }
+.drink-card .dk-stats{ display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; font-size:.7rem; font-weight:600; }
 .dk-h{ color:var(--hydration); } .dk-c{ color:var(--caffeine); } .dk-s{ color:var(--sugar); } .dk-a{ color:var(--alcohol); }
+.serv-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
+.serv-grid button{
+  background:var(--card-2); border:1px solid var(--border); border-radius:12px; padding:9px 4px;
+  color:var(--text); font-weight:600; font-size:.83rem; line-height:1.15; transition:background .18s ease;
+}
+.serv-grid button small{ display:block; font-size:.66rem; color:var(--text-faint); font-weight:500; margin-top:2px; }
+.serv-grid button.on{ background:var(--accent); border-color:transparent; color:#fff; }
+.serv-grid button.on small{ color:rgba(255,255,255,.82); }
+
+/* =========================================================================
+   SCHEDULE STRIP
+   ========================================================================= */
+.cal-strip{ display:flex; gap:7px; overflow-x:auto; padding-bottom:6px; margin:0 -2px; }
+.cal-strip::-webkit-scrollbar{ display:none; }
+.cal-day{ flex:none; width:60px; border-radius:13px; padding:9px 4px; text-align:center; background:var(--card); border:1px solid var(--border); }
+.cal-day .cd-dow{ font-size:.6rem; color:var(--text-faint); font-weight:600; letter-spacing:.08em; text-transform:uppercase; }
+.cal-day .cd-num{ font-family:var(--font-display); font-size:1.02rem; font-weight:600; margin:3px 0; }
+.cal-day .cd-w{ font-size:.6rem; font-weight:600; line-height:1.15; min-height:2.3em; display:flex; align-items:center; justify-content:center; }
+.cal-day.today{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+.sched-list .list-item .li-sub small{ opacity:.8; }
+.wk-type-run{ color:var(--accent); } .wk-type-str{ color:var(--caffeine); } .wk-type-rest{ color:var(--text-dim); }
 
 /* =========================================================================
    STRENGTH TABLE
    ========================================================================= */
 .ex-block{ background:var(--card-2); border-radius:14px; padding:12px; margin-bottom:12px; border:1px solid var(--border); }
 .ex-head{ display:flex; align-items:center; gap:8px; margin-bottom:10px; }
-.ex-head input{ flex:1; background:var(--field); border:1px solid var(--border); border-radius:9px; padding:8px 10px; font-weight:700; min-height:40px; }
+.ex-head input{ flex:1; background:var(--field); border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-weight:600; min-height:40px; }
 .set-table{ width:100%; border-collapse:collapse; }
-.set-table th{ font-size:.68rem; color:var(--text-dim); font-weight:700; text-align:center; padding:4px 2px; text-transform:uppercase; letter-spacing:.03em; }
+.set-table th{ font-size:.62rem; color:var(--text-faint); font-weight:600; text-align:center; padding:4px 2px; text-transform:uppercase; letter-spacing:.09em; }
 .set-table td{ padding:3px 2px; text-align:center; }
-.set-table td.setn{ font-weight:800; color:var(--text-dim); width:30px; }
-.set-table td.prev{ font-size:.78rem; color:var(--text-faint); width:74px; }
-.set-table input{ width:100%; background:var(--field); border:1px solid var(--border); border-radius:8px; padding:7px 2px; text-align:center; min-height:38px; }
+.set-table td.setn{ font-family:var(--font-display); font-weight:600; color:var(--text-faint); width:28px; }
+.set-table td.prev{ font-size:.76rem; color:var(--text-faint); width:72px; }
+.set-table input{ width:100%; background:var(--field); border:1px solid var(--border); border-radius:9px; padding:7px 2px; text-align:center; min-height:38px; }
 .set-table .donecell{ width:42px; }
-.setdone{ width:30px; height:30px; border-radius:8px; border:1.5px solid var(--border-strong); background:transparent; display:inline-flex; align-items:center; justify-content:center; font-size:.95rem; }
-.setdone.on{ background:var(--good); border-color:var(--good); color:#04210d; }
-.del-set{ color:var(--bad); background:none; border:none; font-size:1.1rem; padding:2px 4px; }
-
-/* =========================================================================
-   TIMER
-   ========================================================================= */
+.setdone{
+  width:30px; height:30px; border-radius:9px; border:1.5px solid var(--border-strong);
+  background:transparent; display:inline-flex; align-items:center; justify-content:center; font-size:.9rem;
+}
+.setdone.on{ background:var(--good); border-color:transparent; color:#04210d; }
+.del-set{ color:var(--bad); background:none; border:none; font-size:1.05rem; padding:2px 4px; }
 .timer{ display:flex; align-items:center; gap:12px; background:var(--card-2); border-radius:14px; padding:12px 14px; border:1px solid var(--border); }
-.timer .tdisp{ font-size:1.7rem; font-weight:800; font-variant-numeric:tabular-nums; letter-spacing:-.02em; flex:1; }
+.timer .tdisp{ font-family:var(--font-display); font-size:1.6rem; font-weight:700; letter-spacing:-.03em; flex:1; }
 
 /* =========================================================================
    CHARTS
    ========================================================================= */
 .chart-wrap{ width:100%; overflow:hidden; }
 .chart-wrap svg{ width:100%; height:auto; display:block; }
-.chart-legend{ display:flex; gap:14px; flex-wrap:wrap; font-size:.76rem; margin-top:8px; }
+.chart-legend{ display:flex; gap:13px; flex-wrap:wrap; font-size:.74rem; margin-top:8px; }
 .chart-legend span{ display:flex; align-items:center; gap:5px; color:var(--text-dim); }
-.chart-legend i{ width:11px; height:11px; border-radius:3px; display:inline-block; }
+.chart-legend i{ width:10px; height:10px; border-radius:3px; display:inline-block; }
 .chart-pick{ width:100%; }
+.chart-card{ margin-bottom:13px; }
+.chart-title{ font-family:var(--font-display); font-weight:600; font-size:.92rem; letter-spacing:-.015em; margin-bottom:2px; }
+.chart-sub{ font-size:.74rem; color:var(--text-dim); margin-bottom:11px; }
 
 /* =========================================================================
-   MODAL / SHEET
+   SHEET
    ========================================================================= */
-.sheet-back{ position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:50; display:none; align-items:flex-end; backdrop-filter:blur(3px); }
-.sheet-back.open{ display:flex; }
-.sheet{ width:100%; max-width:520px; margin:0 auto; background:var(--bg-2); border-radius:24px 24px 0 0; padding:8px 18px calc(env(safe-area-inset-bottom) + 22px); max-height:88vh; overflow-y:auto; border:1px solid var(--border); border-bottom:none; animation:slideup .28s cubic-bezier(.22,1,.36,1); }
+.sheet-back{
+  position:fixed; inset:0; background:rgba(0,0,0,.58); z-index:50; display:none;
+  align-items:flex-end; backdrop-filter:blur(4px);
+}
+.sheet-back.open{ display:flex; animation:fadein .2s ease; }
+@keyframes fadein{ from{ opacity:0; } to{ opacity:1; } }
+.sheet{
+  width:100%; max-width:520px; margin:0 auto; background:var(--bg-2);
+  border-radius:26px 26px 0 0; padding:8px 18px calc(env(safe-area-inset-bottom) + 24px);
+  max-height:88vh; overflow-y:auto; border:1px solid var(--border); border-bottom:none;
+  animation:slideup .32s cubic-bezier(.22,1,.36,1); box-shadow:0 -14px 40px rgba(0,0,0,.4);
+}
 @keyframes slideup{ from{ transform:translateY(100%); } to{ transform:translateY(0); } }
-.sheet .grab{ width:38px; height:5px; border-radius:3px; background:var(--border-strong); margin:8px auto 12px; }
-.sheet h3{ margin:0 0 14px; font-size:1.25rem; font-weight:800; letter-spacing:-.02em; }
+.sheet .grab{ width:36px; height:4px; border-radius:3px; background:var(--border-strong); margin:8px auto 14px; }
+.sheet h3{ font-family:var(--font-display); margin:0 0 13px; font-size:1.18rem; font-weight:700; letter-spacing:-.03em; }
 
 /* =========================================================================
-   TOAST + NAV
+   TOAST + DOCK
    ========================================================================= */
-#toast{ position:fixed; left:50%; bottom:calc(env(safe-area-inset-bottom) + 96px); transform:translateX(-50%) translateY(20px); background:var(--card); color:var(--text); padding:12px 18px; border-radius:14px; box-shadow:var(--shadow); border:1px solid var(--border-strong); font-size:.9rem; font-weight:600; z-index:100; opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease; max-width:90%; text-align:center; }
+#toast{
+  position:fixed; left:50%; bottom:calc(env(safe-area-inset-bottom) + 108px);
+  transform:translateX(-50%) translateY(16px);
+  background:var(--card); color:var(--text); padding:12px 18px; border-radius:14px;
+  box-shadow:var(--shadow); border:1px solid var(--border-strong);
+  font-size:.88rem; font-weight:600; z-index:100; opacity:0; pointer-events:none;
+  transition:opacity .25s ease, transform .25s cubic-bezier(.22,1,.36,1); max-width:88%; text-align:center;
+}
 #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
-.tabbar{ position:fixed; bottom:0; left:0; right:0; z-index:40; display:flex; justify-content:space-around; padding:8px 6px calc(env(safe-area-inset-bottom) + 8px); background:color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter:blur(18px); border-top:1px solid var(--border); }
-.tabbar .tab{ display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; color:var(--text-faint); font-size:.62rem; font-weight:600; padding:4px 10px; min-width:54px; }
-.tabbar .tab .ti{ font-size:1.25rem; }
-.tabbar .tab.on{ color:var(--accent); }
+/* a floating dock rather than a full-width bar — the app reads as one panel */
+.tabbar{
+  position:fixed; left:50%; transform:translateX(-50%);
+  bottom:calc(env(safe-area-inset-bottom) + 12px); z-index:40;
+  display:flex; gap:2px; padding:6px; border-radius:21px;
+  background:var(--dock); backdrop-filter:blur(20px) saturate(170%);
+  border:1px solid var(--border-strong);
+  box-shadow:0 12px 32px rgba(0,0,0,.4), inset 0 1px 0 var(--edge);
+  max-width:calc(100% - 22px);
+}
+.tabbar .tab{
+  display:flex; flex-direction:column; align-items:center; gap:4px;
+  background:none; border:none; border-radius:16px; color:var(--text-faint);
+  font-size:.58rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+  padding:8px 11px; min-width:56px; transition:color .2s ease, background .2s ease;
+}
+.tabbar .tab .ti{ font-size:1.1rem; line-height:1; }
+.tabbar .tab.on{ color:var(--accent); background:var(--accent-soft); }
 
 /* =========================================================================
-   SCREENS
+   SCREENS + MISC
    ========================================================================= */
-.screen{ display:none; animation:fade .25s ease; }
-.screen.active{ display:block; }
-@keyframes fade{ from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:none; } }
-
-.label-sm{ font-size:.78rem; color:var(--text-dim); font-weight:600; margin-bottom:6px; }
-.tgt-box{ background:var(--accent-soft); border:1px solid color-mix(in srgb,var(--accent) 30%, transparent); border-radius:14px; padding:13px 15px; margin-bottom:14px; }
-.tgt-box .tgt-lab{ font-size:.76rem; color:var(--accent); font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
-.tgt-box .tgt-val{ font-size:1.25rem; font-weight:800; margin-top:3px; }
-.warnbox{ background:rgba(255,214,10,.12); border:1px solid rgba(255,214,10,.3); color:var(--warn); border-radius:12px; padding:11px 14px; font-size:.86rem; font-weight:600; margin-bottom:14px; }
-.cal-strip{ display:flex; gap:7px; overflow-x:auto; padding-bottom:6px; margin:0 -2px; }
-.cal-strip::-webkit-scrollbar{ display:none; }
-.cal-day{ flex:none; width:62px; border-radius:13px; padding:9px 4px; text-align:center; background:var(--card); border:1px solid var(--border); }
-.cal-day .cd-dow{ font-size:.66rem; color:var(--text-dim); font-weight:700; text-transform:uppercase; }
-.cal-day .cd-num{ font-size:1.05rem; font-weight:800; margin:2px 0; }
-.cal-day .cd-w{ font-size:.62rem; font-weight:700; line-height:1.15; min-height:2.3em; display:flex; align-items:center; justify-content:center; }
-.cal-day.today{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
-.sched-list .list-item .li-sub small{ opacity:.8; }
-.wk-type-run{ color:var(--accent); } .wk-type-str{ color:var(--caffeine); } .wk-type-rest{ color:var(--text-dim); }
-
-.kv{ display:flex; justify-content:space-between; align-items:baseline; padding:7px 0; border-bottom:1px solid var(--border); }
-.kv:last-child{ border-bottom:none; }
-.kv .k{ color:var(--text-dim); font-size:.88rem; }
-.kv .v{ font-weight:700; font-variant-numeric:tabular-nums; }
-
-.metric-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.metric{ background:var(--card-2); border:1px solid var(--border); border-radius:14px; padding:12px; }
-.metric .m-lab{ font-size:.72rem; color:var(--text-dim); font-weight:600; }
-.metric .m-val{ font-size:1.35rem; font-weight:800; letter-spacing:-.02em; margin-top:2px; }
-.metric .m-unit{ font-size:.72rem; color:var(--text-faint); font-weight:600; }
-.metric .m-chg{ font-size:.74rem; font-weight:700; margin-top:3px; }
-
-.summary-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.summary-grid .metric .m-val{ font-size:1.2rem; }
-
-/* ---- supplementary helpers for hydration/nutrition/body/teeth/trends/data/settings ---- */
-.section-h{ font-size:1.05rem; font-weight:800; letter-spacing:-.01em; margin:18px 2px 10px; }
-.hint{ color:var(--text-dim); font-size:.82rem; }
-.bar > .fillb{ display:block; height:100%; border-radius:6px; background:var(--accent); transition:width .5s ease; }
-.serv-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
-.serv-grid button{ background:var(--card-2); border:1px solid var(--border); border-radius:11px; padding:9px 4px; color:var(--text); font-weight:700; font-size:.85rem; line-height:1.15; }
-.serv-grid button small{ display:block; font-size:.68rem; color:var(--text-faint); font-weight:600; margin-top:2px; }
-.serv-grid button.on{ background:var(--accent); border-color:var(--accent); color:#fff; }
-.serv-grid button.on small{ color:rgba(255,255,255,.85); }
-.m-chg.up{ color:var(--good); } .m-chg.down{ color:var(--bad); } .m-chg.flat{ color:var(--text-faint); }
-.m-chg.up.inv{ color:var(--bad); } .m-chg.down.inv{ color:var(--good); }
-.danger{ border-color:rgba(255,69,58,.4) !important; }
-.danger-zone{ border:1px solid rgba(255,69,58,.35); border-radius:14px; padding:14px; margin-top:8px; }
-.field-row{ display:flex; gap:10px; align-items:flex-end; }
-.field-row .field{ flex:1; margin-bottom:0; }
+.screen{ display:none; }
+.screen.active{ display:block; animation:rise .3s cubic-bezier(.22,1,.36,1); }
+@keyframes rise{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:none; } }
 .tt-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 0; border-bottom:1px solid var(--border); }
 .tt-row:last-child{ border-bottom:none; }
-.tt-row .tt-lab{ font-weight:600; }
-.tt-row input{ width:96px; background:var(--field); border:1px solid var(--border); border-radius:9px; padding:8px; text-align:right; min-height:38px; color:var(--text); }
+.tt-row .tt-lab{ font-weight:500; font-size:.9rem; }
+.tt-row input{ width:94px; background:var(--field); border:1px solid var(--border); border-radius:10px; padding:8px; text-align:right; min-height:38px; color:var(--text); }
 .brush-card{ display:flex; align-items:center; gap:14px; }
-.brush-card .bc-emoji{ font-size:1.8rem; }
+.brush-card .bc-emoji{ font-size:1.7rem; }
 .brush-card .bc-main{ flex:1; }
-.chart-card{ margin-bottom:14px; }
-.chart-title{ font-weight:700; font-size:.95rem; margin-bottom:2px; }
-.chart-sub{ font-size:.76rem; color:var(--text-dim); margin-bottom:10px; }
-.no-data{ font-size:.82rem; color:var(--text-faint); padding:18px 0; text-align:center; }
 .exp-row{ display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
 .exp-row:last-child{ border-bottom:none; }
-.exp-row .ex-nm{ flex:1; font-weight:600; font-size:.92rem; }
-@media (max-width:360px){ .home-grid,.drink-grid,.grid2,.metric-grid,.summary-grid{ grid-template-columns:1fr; } .serv-grid{ grid-template-columns:repeat(2,1fr); } }
-@media (prefers-reduced-motion: reduce){ *{ animation-duration:.001s !important; transition-duration:.05s !important; } }
+.exp-row .ex-nm{ flex:1; font-weight:500; font-size:.9rem; }
+.danger{ border-color:color-mix(in srgb, var(--bad) 40%, transparent) !important; }
+.danger-zone{ border:1px solid color-mix(in srgb, var(--bad) 32%, transparent); border-radius:14px; padding:14px; margin-top:8px; }
+
+@media (max-width:360px){
+  .home-grid,.drink-grid,.grid2,.metric-grid,.summary-grid{ grid-template-columns:1fr; }
+  .serv-grid{ grid-template-columns:repeat(2,1fr); }
+  .tabbar .tab{ min-width:48px; padding:8px 7px; }
+}
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration:.001s !important; transition-duration:.05s !important; }
+}
 </style>
 </head>
 <body>
@@ -384,7 +528,10 @@ textarea.input{ min-height:64px; resize:vertical; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       Home
     </button>
-    <h1 id="topTitle">Daily</h1>
+    <div class="ttl-wrap">
+      <div class="eyebrow" id="topEyebrow"></div>
+      <h1 id="topTitle">Daily</h1>
+    </div>
   </div>
   <div id="screens"></div>
 </div>
@@ -508,7 +655,7 @@ async function remoteSave(stateObj){
 /* A state with no logged data at all (used to avoid a first-sync wipe). */
 function isEmptyState(s){
   if (!s) return true;
-  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals"];
+  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs"];
   return arrs.every(k => !Array.isArray(s[k]) || s[k].length === 0);
 }
 
@@ -525,10 +672,13 @@ function defaultSettings(){
   return {
     hydrationGoalMl: 2500,
     nutritionTargets: { calories:2200, fat:70, satFat:20, carbs:260, sugar:90, fibre:30, protein:120, salt:6 },
+    proteinFromWeight: true,   // derive the protein target from the latest weigh-in
+    proteinPerKg: 2,           // grams of protein per kg of body weight
     brushingTargetSec: 120,
+    groomingIntervals: { shave:3, haircut:28 },   // how often you aim to do each, in days
     units: { weight:"kg", distance:"km", volume:"ml" },
     theme: "dark",
-    accent: "#0a84ff",
+    accent: "#6E7BFF",
     compact: false,
     largeText: false,
     firstLongRunRun: 6,   // minutes running interval for the very first Long Run
@@ -639,6 +789,7 @@ function defaultState(){
     brushingLogs: [],        // one per day-slot
     foodLogs: [],            // itemised food entries (barcode / manual), many per day
     meals: [],               // saved meals / recipes (a named set of foods)
+    groomingLogs: [],        // shaves and haircuts (one entry per occurrence)
     drinkDatabase: defaultDrinks()
   };
 }
@@ -705,7 +856,8 @@ function mergeDefaults(s){
   s.settings = Object.assign({}, d.settings, s.settings||{});
   s.settings.nutritionTargets = Object.assign({}, d.settings.nutritionTargets, (s.settings.nutritionTargets)||{});
   s.settings.units = Object.assign({}, d.settings.units, (s.settings.units)||{});
-  ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","drinkDatabase"]
+  s.settings.groomingIntervals = Object.assign({}, d.settings.groomingIntervals, (s.settings.groomingIntervals)||{});
+  ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs","drinkDatabase"]
     .forEach(k => { if(!Array.isArray(s[k])) s[k] = d[k]; });
   if (!s.drinkDatabase.length) s.drinkDatabase = d.drinkDatabase;
   s.version = 1;
@@ -1027,6 +1179,7 @@ const TILES = [
   { id:"nutrition", ic:"🍽️", nm:"Nutrition",       meta:s=>s.nutritionMeta },
   { id:"body",      ic:"⚖️", nm:"Body composition",meta:s=>s.bodyMeta },
   { id:"teeth",     ic:"🪥", nm:"Teeth brushing",  meta:s=>s.teethMeta },
+  { id:"grooming",  ic:"🪒", nm:"Grooming",         meta:s=>s.groomMeta },
   { id:"trends",    ic:"📈", nm:"Trends",          meta:()=>"Charts & analytics" },
   { id:"data",      ic:"🗂️", nm:"Data",            meta:()=>"Export / import" },
   { id:"settings",  ic:"⚙️", nm:"Settings",        meta:()=>"Targets & display" }
@@ -1052,7 +1205,7 @@ function applySettings(){
   document.documentElement.style.setProperty("--accent", st.accent);
   // derive a soft accent
   document.documentElement.style.setProperty("--accent-soft", hexA(st.accent,0.16));
-  document.querySelector('meta[name=theme-color]').setAttribute("content", st.theme==="dark"?"#000000":"#f2f2f7");
+  document.querySelector('meta[name=theme-color]').setAttribute("content", st.theme==="dark"?"#090B10":"#F5F7FB");
 }
 function hexA(hex,a){
   const m = hex.replace("#",""); const r=parseInt(m.slice(0,2),16),g=parseInt(m.slice(2,4),16),b=parseInt(m.slice(4,6),16);
@@ -1074,6 +1227,10 @@ function navigate(id, opts={}){
   document.body.classList.toggle("hydration-active", id==="hydration");
   const scr = SCREENS[id];
   $("#topTitle").textContent = id==="home" ? "Daily" : scr.title;
+  const eb = $("#topEyebrow");
+  if (eb) eb.textContent = id==="home"
+    ? new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})
+    : "Daily";
   $("#backBtn").style.display = id==="home" ? "none" : "inline-flex";
   $("#screens").innerHTML = `<div class="screen active" id="screen-${id}">${scr.render(opts)}</div>`;
   renderTabbar();
@@ -1112,11 +1269,17 @@ function closeSheet(){
 /* ---- home screen ---- */
 SCREENS.home = {
   title:"Daily",
+  mount(){
+    // fills start at 0 and rise once painted
+    setTimeout(() => {
+      const els = document.querySelectorAll("#desk .ch-fill");
+      for (let i=0;i<els.length;i++) els[i].style.height = (els[i].dataset.h||0) + "%";
+    }, 40);
+  },
   render(){
     const m = homeMetas();
     return `
-      <div class="screen-date">${new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div>
-      ${homeSnapshot(m)}
+      ${homeDesk(m)}
       <div class="home-grid">
         ${TILES.map(t=>`
           <button class="tile" onclick="navigate('${t.id}')">
@@ -1131,12 +1294,46 @@ SCREENS.home = {
   }
 };
 
-function homeSnapshot(m){
-  return `<div class="card">
-    <div class="grid3" style="text-align:center;">
-      <div><div class="stat-big" style="color:var(--hydration)">${m.hydrationPct}%</div><div class="stat-label">Hydration</div></div>
-      <div><div class="stat-big">${m.todayWorkoutShort}</div><div class="stat-label">Today’s plan</div></div>
-      <div><div class="stat-big">${m.brushDots}</div><div class="stat-label">Brushing</div></div>
+/* The desk: five channels, one per habit, each 0–100% for today.
+   Tapping a channel jumps to that screen. */
+function deskChannels(m){
+  const t = todayISO();
+  const calTarget = nutritionTarget("calories");
+  const cal = totalCaloriesFor(t);
+  const groomPcts = GROOM_TYPES.map(g=>groomFreshPct(g.key));
+  const soonest = GROOM_TYPES
+    .map(g=>groomStatus(g.key))
+    .filter(st=>st.state!=="none")
+    .map(st=>st.daysUntil)
+    .sort((a,b)=>a-b)[0];
+  return [
+    { id:"hydration", lab:"Water", col:"var(--hydration)",
+      pct:clamp(m.hydrationPct,0,100), val:m.hydrationPct+"%" },
+    { id:"nutrition", lab:"Fuel", col:"var(--caffeine)",
+      pct: calTarget>0 ? clamp(cal/calTarget*100,0,100) : (cal>0?100:0),
+      val: calTarget>0 ? Math.round(clamp(cal/calTarget*100,0,999))+"%" : (cal>0?fmt(cal,0):"–") },
+    { id:"workouts", lab:"Move", col:"var(--accent)", pct:m.movePct, val:m.moveVal },
+    { id:"teeth", lab:"Teeth", col:"var(--good)", pct:m.teethPct, val:(m.teethPct/50)+"/2" },
+    { id:"grooming", lab:"Care", col:"var(--care)",
+      pct: groomPcts.length ? Math.min.apply(null, groomPcts) : 0,
+      val: soonest==null ? "–" : (soonest<=0 ? "Due" : soonest+"d") }
+  ];
+}
+function homeDesk(m){
+  const ch = deskChannels(m);
+  const score = Math.round(ch.reduce((a,c)=>a+c.pct,0) / ch.length);
+  return `<div class="desk" id="desk">
+    <div class="desk-head">
+      <span class="eyebrow">Today so far</span>
+      <span class="desk-score">${score}<small>%</small></span>
+    </div>
+    <div class="desk-strip">
+      ${ch.map(c=>`
+        <button class="ch" onclick="navigate('${c.id}')" aria-label="${esc(c.lab)}">
+          <div class="ch-track"><i class="ch-fill" data-h="${Math.round(c.pct)}" style="background:${c.col};"></i></div>
+          <div class="ch-val">${esc(String(c.val))}</div>
+          <div class="ch-lab">${c.lab}</div>
+        </button>`).join("")}
     </div>
   </div>`;
 }
@@ -1159,6 +1356,11 @@ function homeMetas(){
   // teeth
   const bm = getBrushing(t,"morning"), be = getBrushing(t,"evening");
   const brushDots = (bm&&bm.done?"●":"○")+(be&&be.done?"●":"○");
+  const teethPct = (bm&&bm.done?50:0) + (be&&be.done?50:0);
+  const movePct = todayPlan.logged ? (todayPlan.status==="Missed" ? 0 : 100) : 0;
+  const moveVal = todayPlan.logged
+    ? (todayPlan.status==="Rest Day" ? "Rest" : todayPlan.status==="Missed" ? "Miss" : "Done")
+    : shortLabel(todayPlan.scheduledType);
 
   return {
     hydrationPct,
@@ -1168,6 +1370,8 @@ function homeMetas(){
     nutritionMeta: (nut || drinkSugarKcal(t)>0) ? `${fmt(totalCaloriesFor(t),0)} kcal today` : "Not logged today",
     bodyMeta: bc ? `${fmt(bc.weight,1)} kg · ${prettyDate(bc.date)}` : "No entries yet",
     teethMeta: `${(bm&&bm.done)?"✓":"–"} AM · ${(be&&be.done)?"✓":"–"} PM`,
+    groomMeta: groomHomeMeta(),
+    teethPct, movePct, moveVal,
     brushDots
   };
 }
@@ -1754,6 +1958,57 @@ function getNutrition(date){ return STATE.nutritionLogs.find(l => l.date === dat
 const SUGAR_KCAL_PER_G = 4;
 function drinkSugarKcal(date){ return round(hydrationSummary(date).sugar * SUGAR_KCAL_PER_G, 0); }
 
+/* ---- targets ----------------------------------------------------------
+   The protein target can track body weight (2 g per kg by default), so every
+   read goes through nutritionTarget() rather than the stored figure. */
+function latestBodyWeightKg(){
+  const withWeight = bodyLogsSorted().filter(l => l.weight!=null && l.weight!=="");
+  const last = withWeight[withWeight.length-1];
+  return last ? num(last.weight) : null;
+}
+function nutritionTarget(key){
+  const s = STATE.settings;
+  if (key==="protein" && s.proteinFromWeight){
+    const kg = latestBodyWeightKg();
+    if (kg) return Math.round(kg * num(s.proteinPerKg, 2));
+  }
+  return num(s.nutritionTargets[key], 0);
+}
+function effectiveTargets(){
+  const o = {};
+  NUTRIENTS.forEach(n => o[n.key] = nutritionTarget(n.key));
+  return o;
+}
+/* Is the protein figure currently being derived rather than typed in? */
+function proteinIsDerived(){ return !!STATE.settings.proteinFromWeight && !!latestBodyWeightKg(); }
+
+/* ---- energy burnt (read off the Apple Watch and typed in) ---- */
+function getBurned(date){ const l = getNutrition(date); return l && l.burned!=null ? num(l.burned) : 0; }
+function hasBurned(date){ const l = getNutrition(date); return !!(l && l.burned!=null); }
+function setBurned(date, kcal){
+  let log = getNutrition(date);
+  if (!log){ log = { id:uid("nut"), date, source:"nutrition", createdAt:Date.now() }; STATE.nutritionLogs.push(log); }
+  log.burned = (kcal===null || kcal==="") ? null : Math.max(0, num(kcal));
+  log.updatedAt = Date.now();
+  save();
+}
+function saveBurned(){
+  const d = screenDate("nutrition"), el = $("#burnKcal");
+  setBurned(d, el ? el.value : "");
+  toast("Energy burnt saved"); navigate("nutrition");
+}
+function clearBurned(){
+  const d = screenDate("nutrition");
+  setBurned(d, "");
+  toast("Cleared"); navigate("nutrition");
+}
+/* eaten (food + drink sugar + manual) minus burnt */
+function netCaloriesFor(date){ return totalCaloriesFor(date) - getBurned(date); }
+
+/* A manual day record only counts as "nutrition logged" if it holds actual
+   nutrients — a record carrying just an energy-burnt figure doesn't. */
+function manualHasNutrients(log){ return !!log && NUTRIENTS.some(n => log[n.key]!=null); }
+
 /* Itemised food entries logged for a day (barcode or manual), oldest first. */
 function foodLogsForDate(date){
   return STATE.foodLogs.filter(f => f.date === date).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
@@ -1770,14 +2025,14 @@ function dayNutrient(date, key){
 function totalCaloriesFor(date){ return dayNutrient(date, "calories"); }
 function foodKcalFor(date){ let v=0; STATE.foodLogs.forEach(f=>{ if(f.date===date) v+=num(f.calories); }); return v; }
 function dayHasNutrition(date){
-  return !!getNutrition(date) || STATE.foodLogs.some(f=>f.date===date) || drinkSugarKcal(date)>0;
+  return manualHasNutrients(getNutrition(date)) || STATE.foodLogs.some(f=>f.date===date) || drinkSugarKcal(date)>0;
 }
 
 function nutritionDatesInWindow(days){
   const cutoff = addDays(todayISO(), -(days-1)), today = todayISO();
   const set = {};
   const within = dt => dt>=cutoff && dt<=today;
-  STATE.nutritionLogs.forEach(l => { if (within(l.date)) set[l.date]=1; });
+  STATE.nutritionLogs.forEach(l => { if (within(l.date) && manualHasNutrients(l)) set[l.date]=1; });
   STATE.foodLogs.forEach(f => { if (within(f.date)) set[f.date]=1; });
   STATE.hydrationLogs.forEach(h => { if (within(h.date) && num(h.sugarG)>0) set[h.date]=1; });
   return Object.keys(set);
@@ -1810,10 +2065,11 @@ SCREENS.nutrition = {
   render(){
     const d = screenDate("nutrition");
     const log = getNutrition(d);
-    const tg = STATE.settings.nutritionTargets;
+    const tg = effectiveTargets();
     const avg = nutritionAverages(7);
     const drinkKcal = drinkSugarKcal(d);
     const foodKcal = foodKcalFor(d);
+    const burned = getBurned(d);
     const foods = foodLogsForDate(d);
     const hasAny = dayHasNutrition(d);
 
@@ -1830,7 +2086,9 @@ SCREENS.nutrition = {
       const bits = [];
       if (n.key==="calories" && foodKcal>0) bits.push(`${fmt(foodKcal,0)} from food`);
       if (n.key==="calories" && drinkKcal>0) bits.push(`${fmt(drinkKcal,0)} from drink sugar`);
-      const sub = bits.length ? `<div class="muted" style="font-size:12px;margin-top:3px;">incl. ${bits.join(" · ")}</div>` : "";
+      let sub = bits.length ? `<div class="muted" style="font-size:12px;margin-top:3px;">incl. ${bits.join(" · ")}</div>` : "";
+      if (n.key==="protein" && proteinIsDerived())
+        sub += `<div class="muted" style="font-size:12px;margin-top:3px;">target = ${fmt(STATE.settings.proteinPerKg,1)} g per kg of ${fmt(latestBodyWeightKg(),1)} kg</div>`;
       return `<div style="margin-bottom:13px;">
         <div class="row spread" style="margin-bottom:5px;">
           <span style="font-weight:600;">${n.lab}</span>
@@ -1847,6 +2105,26 @@ SCREENS.nutrition = {
       <div class="card">
         <h3>${d===todayISO()?"Today’s":"Daily"} totals</h3>
         ${hasAny ? rows : `<div class="empty"><span class="big">🍽️</span>Nothing logged for this day yet.</div>`}
+      </div>
+
+      <div class="card">
+        <div class="row spread" style="align-items:flex-start;">
+          <div>
+            <div class="eyebrow">Energy burnt</div>
+            <div class="stat-big" style="margin-top:5px;color:var(--caffeine);">${burned?fmt(burned,0):"–"}<span class="m-unit" style="font-size:.8rem;"> kcal</span></div>
+          </div>
+          <div style="text-align:right;">
+            <div class="eyebrow">Net</div>
+            <div class="stat-big" style="margin-top:5px;">${hasAny||burned?fmt(netCaloriesFor(d),0):"–"}<span class="m-unit" style="font-size:.8rem;"> kcal</span></div>
+          </div>
+        </div>
+        <p class="hint" style="margin:9px 0 10px;">Copy the active energy total from your Apple Watch. Net is what you've eaten minus what you've burnt.</p>
+        <div class="row" style="gap:8px;">
+          <input class="input" id="burnKcal" type="number" inputmode="numeric" min="0" step="1"
+                 value="${hasBurned(d)?esc(getBurned(d)):""}" placeholder="e.g. 620" style="flex:1;">
+          <button class="btn primary" onclick="saveBurned()">Save</button>
+          ${hasBurned(d)?`<button class="iconbtn" onclick="clearBurned()">🗑️</button>`:""}
+        </div>
       </div>
 
       <div class="card flush">
@@ -1880,7 +2158,7 @@ SCREENS.nutrition = {
 function openNutritionSheet(){
   const d = screenDate("nutrition");
   const log = getNutrition(d) || {};
-  const tg = STATE.settings.nutritionTargets;
+  const tg = effectiveTargets();
   openSheet(`
     <h3>Nutrition — ${prettyDate(d)}</h3>
     <p class="hint" style="margin-bottom:12px;">Enter the day’s food totals from a label or another app. Calories from drink sugar are added automatically.</p>
@@ -1961,7 +2239,14 @@ SCREENS.body = {
       <div class="card">
         <div class="row spread"><h3>Measurements</h3>
           <button class="btn sm primary" onclick="openBodySheet()">${entryForDay?"Edit day":"Log day"}</button></div>
-        ${entryForDay?`<p class="hint">Entry saved for ${prettyDate(d)}.</p>`:`<p class="hint">No entry for ${prettyDate(d)} yet.</p>`}
+        ${entryForDay?`<p class="hint">Entry saved for ${prettyDate(d)}.${entryForDay.source==="scale"?" Imported from your scales.":""}</p>`:`<p class="hint">No entry for ${prettyDate(d)} yet.</p>`}
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">From your scales</div>
+        <p class="hint" style="margin:7px 0 11px;">Export a CSV from the RENPHO app (Profile ▸ Export data) and load it here — every reading is read straight in, no typing.</p>
+        <input type="file" id="scaleFile" accept=".csv,text/csv,text/plain" style="display:none" onchange="readScaleCsv(this)">
+        <button class="btn full" onclick="document.getElementById('scaleFile').click()">Choose a CSV file…</button>
       </div>
 
       <h3 class="section-h">Latest readings</h3>
@@ -2126,6 +2411,8 @@ function allDataDates(){
   STATE.nutritionLogs.forEach(l=>ds.push(l.date));
   STATE.bodyCompositionLogs.forEach(l=>ds.push(l.date));
   STATE.brushingLogs.forEach(l=>ds.push(l.date));
+  STATE.foodLogs.forEach(l=>ds.push(l.date));
+  STATE.groomingLogs.forEach(l=>ds.push(l.date));
   return ds.sort();
 }
 function rangeDates(){
@@ -2313,12 +2600,18 @@ function trendCharts(){
   if (TREND_CAT==="nutrition"){
     const line = (key,lab,col)=> buildChart(lab, "", dates.map(shortDate),
       [{name:lab,color:col,type:"line",values:daily(dates,d=> dayHasNutrition(d) ? dayNutrient(d,key) : null)}],
-      {ref: STATE.settings.nutritionTargets[key]?{value:num(STATE.settings.nutritionTargets[key]),label:"target",color:"var(--good)"}:null,
+      {ref: nutritionTarget(key)?{value:nutritionTarget(key),label:"target",color:"var(--good)"}:null,
        integer: key==="calories"});
     html += buildChart("Calories per day (kcal)","incl. food & drink", dates.map(shortDate),
       [{name:"Calories",color:"var(--accent)",type:"line",values:daily(dates,d=> dayHasNutrition(d) ? totalCaloriesFor(d) : null)}],
-      {ref: STATE.settings.nutritionTargets.calories?{value:num(STATE.settings.nutritionTargets.calories),label:"target",color:"var(--good)"}:null,
+      {ref: nutritionTarget("calories")?{value:nutritionTarget("calories"),label:"target",color:"var(--good)"}:null,
        integer:true});
+    html += buildChart("Energy burnt per day (kcal)","from your Apple Watch", dates.map(shortDate),
+      [{name:"Burnt",color:"var(--caffeine)",type:"line",values:daily(dates,d=> hasBurned(d) ? getBurned(d) : null)}],
+      {integer:true});
+    html += buildChart("Net calories per day (kcal)","eaten minus burnt", dates.map(shortDate),
+      [{name:"Net",color:"var(--accent)",type:"line",values:daily(dates,d=> (dayHasNutrition(d)||hasBurned(d)) ? netCaloriesFor(d) : null)}],
+      {integer:true});
     html += line("protein","Protein per day (g)","#30d158");
     html += line("carbs","Carbs per day (g)","#ff9f0a");
     html += line("sugar","Sugar per day (g)","var(--sugar)");
@@ -2415,6 +2708,9 @@ function flattenSettings(){
   const s=STATE.settings;
   return { hydrationGoalMl:s.hydrationGoalMl, brushingTargetSec:s.brushingTargetSec,
     ...Object.fromEntries(Object.entries(s.nutritionTargets).map(([k,v])=>["target_"+k,v])),
+    target_protein: nutritionTarget("protein"),
+    protein_from_weight: !!s.proteinFromWeight,
+    protein_per_kg: s.proteinPerKg,
     weightUnit:s.units.weight, distanceUnit:s.units.distance, volumeUnit:s.units.volume,
     theme:s.theme, accent:s.accent, compact:s.compact, largeText:s.largeText,
     firstLongRunRun:s.firstLongRunRun, firstLongRunWalk:s.firstLongRunWalk };
@@ -2429,6 +2725,7 @@ const EXPORT_CATS = [
   { key:"meals",     lab:"Meals / recipes",   rows:()=>mealItemRows(),            json:()=>STATE.meals },
   { key:"body",      lab:"Body composition",  rows:()=>STATE.bodyCompositionLogs, json:()=>STATE.bodyCompositionLogs },
   { key:"teeth",     lab:"Teeth brushing",    rows:()=>STATE.brushingLogs,        json:()=>STATE.brushingLogs },
+  { key:"grooming",  lab:"Grooming",          rows:()=>STATE.groomingLogs,        json:()=>STATE.groomingLogs },
   { key:"settings",  lab:"Settings",          rows:()=>[flattenSettings()],       json:()=>STATE.settings }
 ];
 function foodRows(){ return STATE.foodLogs.map(f=>{ const o={}; Object.keys(f).forEach(k=>{ if(k!=="per100") o[k]=f[k]; }); return o; }); }
@@ -2573,7 +2870,7 @@ function clearAllData(){
 /* =====================================================================
    SECTION 8 — SETTINGS
    ===================================================================== */
-const ACCENTS = ["#0a84ff","#30d158","#ff375f","#bf5af2","#ff9f0a","#64d2ff","#ff453a"];
+const ACCENTS = ["#6E7BFF","#3AC8F5","#2FD98D","#F5A524","#FF6FB5","#A78BFA","#FF5C5C"];
 
 SCREENS.settings = {
   title: "Settings",
@@ -2610,10 +2907,33 @@ SCREENS.settings = {
       </div>
 
       <div class="card">
+        <h3>Grooming</h3>
+        <p class="hint" style="margin:2px 0 10px;">How often you aim to do each. The countdown on the Grooming screen follows these.</p>
+        ${GROOM_TYPES.map(t=>`<div class="tt-row"><span class="tt-lab">${t.ic} ${t.lab} — every</span>
+          <span><input type="number" min="1" step="1" id="grm_${t.key}" value="${groomInterval(t.key)}"> days</span></div>`).join("")}
+        <button class="btn sm primary" style="margin-top:12px;" onclick="saveGroomingSettings()">Save intervals</button>
+      </div>
+
+      <div class="card">
         <h3>Nutrition targets</h3>
-        ${NUTRIENTS.map(n=>`<div class="tt-row"><span class="tt-lab">${n.lab}</span>
-          <span><input type="number" id="ntg_${n.key}" value="${s.nutritionTargets[n.key]}"> ${n.unit}</span></div>`).join("")}
+        ${NUTRIENTS.map(n=>{
+          const auto = n.key==="protein" && s.proteinFromWeight;
+          return `<div class="tt-row"><span class="tt-lab">${n.lab}${auto?` <span class="faint" style="font-weight:400;">· from weight</span>`:""}</span>
+          <span><input type="number" id="ntg_${n.key}" value="${auto?nutritionTarget("protein"):s.nutritionTargets[n.key]}" ${auto?"disabled":""}> ${n.unit}</span></div>`;
+        }).join("")}
         <button class="btn sm primary" style="margin-top:12px;" onclick="saveNutritionTargets()">Save targets</button>
+
+        <div class="divider"></div>
+        <div class="tt-row"><span class="tt-lab">Set protein from body weight</span>
+          <button class="toggle ${s.proteinFromWeight?"on":""}" onclick="toggleSetting('proteinFromWeight')"><span class="knob"></span></button></div>
+        ${s.proteinFromWeight?`
+          <div class="tt-row"><span class="tt-lab">Grams per kg</span>
+            <span><input type="number" id="set_ppk" value="${s.proteinPerKg}" step="0.1" min="0.1"> g/kg</span></div>
+          <button class="btn sm ghost" style="margin-top:10px;" onclick="saveProteinRule()">Save rule</button>
+          <p class="hint" style="margin-top:9px;">${latestBodyWeightKg()
+            ? `Currently ${fmt(nutritionTarget("protein"),0)} g — ${fmt(s.proteinPerKg,1)} g per kg of your last weigh-in (${fmt(latestBodyWeightKg(),1)} kg on ${prettyDate(latestBody().date)}). It updates itself whenever you log a new weight.`
+            : `No weigh-in logged yet, so the typed-in target is being used. Log a weight and this takes over.`}</p>`
+          :`<p class="hint" style="margin-top:9px;">Turn this on to keep the protein target at a set number of grams per kg of your latest weigh-in.</p>`}
       </div>
 
       <div class="card">
@@ -2684,7 +3004,11 @@ function saveBasicSettings(){
   save(); toast("Targets saved");
 }
 function saveNutritionTargets(){
-  NUTRIENTS.forEach(n=>{ STATE.settings.nutritionTargets[n.key] = num($("#ntg_"+n.key).value, STATE.settings.nutritionTargets[n.key]); });
+  NUTRIENTS.forEach(n=>{
+    if (n.key==="protein" && STATE.settings.proteinFromWeight) return;   // derived, not typed
+    const el = $("#ntg_"+n.key);
+    if (el) STATE.settings.nutritionTargets[n.key] = num(el.value, STATE.settings.nutritionTargets[n.key]);
+  });
   save(); toast("Nutrition targets saved");
 }
 function setUnit(kind,val){ STATE.settings.units[kind]=val; save(); toast("Units updated"); }
@@ -3087,6 +3411,376 @@ SCREENS.mealEdit = {
 };
 
 
+/* =====================================================================
+   SECTION 10 — GROOMING  (shaves and haircuts, each with a due date)
+   ===================================================================== */
+const GROOM_TYPES = [
+  { key:"shave",   lab:"Shave",   ic:"🪒", past:"Last shave",   act:"Log a shave",   defaultDays:3  },
+  { key:"haircut", lab:"Haircut", ic:"💈", past:"Last haircut", act:"Log a haircut", defaultDays:28 }
+];
+function groomType(key){ return GROOM_TYPES.find(t=>t.key===key) || GROOM_TYPES[0]; }
+function daysBetween(fromIsoDate, toIsoDate){
+  return Math.round((fromISO(toIsoDate) - fromISO(fromIsoDate)) / 86400000);
+}
+/* How often you want to do each, from settings, with a sane fallback. */
+function groomInterval(type){
+  const cfg = STATE.settings.groomingIntervals || {};
+  const def = groomType(type).defaultDays;
+  const v = num(cfg[type], def);
+  return v > 0 ? v : def;
+}
+function groomLogs(type){ return STATE.groomingLogs.filter(g=>g.type===type).sort(byDateDesc); }
+function lastGroom(type){ return groomLogs(type)[0] || null; }
+
+/* Everything the UI needs about one grooming habit, in one object. */
+function groomStatus(type){
+  const last = lastGroom(type), interval = groomInterval(type), today = todayISO();
+  if (!last) return { type, last:null, interval, state:"none" };
+  const daysSince = daysBetween(last.date, today);
+  const due = addDays(last.date, interval);
+  const daysUntil = daysBetween(today, due);
+  const state = daysUntil < 0 ? "overdue" : (daysUntil === 0 ? "due" : "ok");
+  return { type, last, interval, daysSince, due, daysUntil, state };
+}
+function plural(n,word){ return `${n} ${word}${Math.abs(n)===1?"":"s"}`; }
+function groomSinceText(s){
+  if (s.state==="none") return "Never logged";
+  if (s.daysSince===0) return "Today";
+  if (s.daysSince===1) return "Yesterday";
+  return plural(s.daysSince,"day") + " ago";
+}
+function groomDueText(s){
+  if (s.state==="none") return "Not started";
+  if (s.state==="overdue") return `Overdue by ${plural(Math.abs(s.daysUntil),"day")}`;
+  if (s.state==="due") return "Due today";
+  return `Due in ${plural(s.daysUntil,"day")}`;
+}
+/* 100% = just done, 0% = due (or past it). Drives the meters. */
+function groomFreshPct(type){
+  const s = groomStatus(type);
+  if (s.state==="none") return 0;
+  return Math.round(clamp((1 - s.daysSince / s.interval) * 100, 0, 100));
+}
+function groomPillClass(s){
+  return s.state==="overdue" ? "bad" : s.state==="due" ? "warn" : s.state==="none" ? "neutral" : "good";
+}
+/* Your real-world cadence, to compare against the target interval. */
+function groomAvgGap(type){
+  const logs = groomLogs(type);
+  if (logs.length < 2) return null;
+  let total = 0;
+  for (let i=0; i<logs.length-1; i++) total += daysBetween(logs[i+1].date, logs[i].date);
+  return total / (logs.length-1);
+}
+
+function logGroom(type, date){
+  const d = date || todayISO();
+  STATE.groomingLogs.push({ id:uid("grm"), date:d, type, source:"grooming", createdAt:Date.now() });
+  save(); closeSheet(); toast(groomType(type).lab + " logged"); navigate("grooming");
+}
+function deleteGroom(id){
+  STATE.groomingLogs = STATE.groomingLogs.filter(g=>g.id!==id);
+  save(); toast("Removed"); navigate("grooming");
+}
+/* Backdating, for when you remember two days later. */
+function openGroomSheet(type){
+  const t = groomType(type);
+  openSheet(`
+    <h3>${t.act}</h3>
+    <p class="hint" style="margin-bottom:12px;">Defaults to today — change the date if you're catching up.</p>
+    <label class="field"><span>Date</span>
+      <input class="input" id="grmDate" type="date" value="${todayISO()}" max="${todayISO()}"></label>
+    <button class="btn primary full" onclick="logGroom('${t.key}', $('#grmDate').value || todayISO())">${t.act}</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+  `);
+}
+
+function groomCard(type){
+  const t = groomType(type), s = groomStatus(type);
+  const pct = groomFreshPct(type), gap = groomAvgGap(type);
+  const all = groomLogs(type), recent = all.slice(0,5);
+  const fillCol = s.state==="overdue" ? "var(--bad)" : s.state==="due" ? "var(--warn)" : "var(--care)";
+  return `
+    <div class="card">
+      <div class="row spread" style="align-items:flex-start;gap:12px;">
+        <div style="min-width:0;">
+          <div class="eyebrow">${t.past}</div>
+          <div class="stat-big" style="margin-top:5px;">${groomSinceText(s)}</div>
+          <div class="muted" style="font-size:.84rem;margin-top:3px;">
+            ${s.last ? prettyDate(s.last.date) : `Target: every ${plural(s.interval,"day")}`}</div>
+        </div>
+        <span class="pill ${groomPillClass(s)}" style="flex:none;">${groomDueText(s)}</span>
+      </div>
+
+      <div class="meter" style="margin-top:15px;"><i style="width:${pct}%;background:${fillCol};"></i></div>
+      <div class="row spread" style="margin-top:7px;">
+        <span class="hint">Every ${plural(s.interval,"day")}${gap!=null?` · you average ${fmt(gap,1)}`:""}</span>
+        ${s.state==="ok"?`<span class="hint">${prettyDate(s.due)}</span>`:""}
+      </div>
+
+      <div class="btn-row" style="margin-top:15px;">
+        <button class="btn primary" onclick="logGroom('${t.key}')">${t.ic} Did it today</button>
+        <button class="btn ghost" onclick="openGroomSheet('${t.key}')">Another day</button>
+      </div>
+
+      ${recent.length?`
+        <div class="divider"></div>
+        <div class="eyebrow" style="margin-bottom:4px;">Recent</div>
+        ${recent.map((g,i)=>{
+          const older = all[i+1];
+          const gapTxt = older ? `${plural(daysBetween(older.date,g.date),"day")} on from the last` : "first one logged";
+          return `<div class="kv"><span class="k">${prettyDate(g.date)} <span class="faint">· ${gapTxt}</span></span>
+            <span class="v"><button class="iconbtn" onclick="deleteGroom('${g.id}')">🗑️</button></span></div>`;
+        }).join("")}`:""}
+    </div>`;
+}
+
+SCREENS.grooming = {
+  title: "Grooming",
+  render(){
+    return `
+      <p class="hint" style="margin:0 2px 14px;">How long it's been, and when you're next due. Set how often you want each in Settings.</p>
+      ${GROOM_TYPES.map(t=>groomCard(t.key)).join("")}
+    `;
+  }
+};
+
+/* short home-tile summary, e.g. "Shave due · Cut 12d" */
+function groomHomeMeta(){
+  return GROOM_TYPES.map(t=>{
+    const s = groomStatus(t.key), nm = t.key==="haircut" ? "Cut" : "Shave";
+    if (s.state==="none") return `${nm} —`;
+    if (s.state==="overdue") return `${nm} overdue`;
+    if (s.state==="due") return `${nm} due`;
+    return `${nm} ${s.daysUntil}d`;
+  }).join(" · ");
+}
+
+function saveProteinRule(){
+  const el = $("#set_ppk");
+  if (el) STATE.settings.proteinPerKg = Math.max(0.1, num(el.value, STATE.settings.proteinPerKg));
+  save(); toast("Protein rule saved"); navigate("settings");
+}
+
+function saveGroomingSettings(){
+  const g = STATE.settings.groomingIntervals;
+  GROOM_TYPES.forEach(t => {
+    const el = $("#grm_"+t.key);
+    if (el) g[t.key] = Math.max(1, Math.round(num(el.value, t.defaultDays)));
+  });
+  save(); toast("Grooming intervals saved"); navigate("settings");
+}
+
+/* =====================================================================
+   SECTION 11 — SCALE IMPORT  (CSV export from the RENPHO app)
+   ===================================================================== */
+const LB_TO_KG = 0.45359237, ST_TO_KG = 6.35029318;
+const MASS_KEYS = ["weight","fatFreeMass","muscleMass","boneMass"];
+/* RENPHO's column names normalise straight onto our metric keys; the aliases
+   cover the wordings it has used in other exports and locales. */
+const SCALE_ALIASES = {
+  bodyfatrate:"bodyFat", bodyfatpercentage:"bodyFat", fat:"bodyFat",
+  skeletalmusclerate:"skeletalMuscle", skeletalmusclepercentage:"skeletalMuscle",
+  bodywaterrate:"bodyWater", water:"bodyWater",
+  proteinrate:"protein", proteinpercentage:"protein",
+  leanbodymass:"fatFreeMass", fatfreebodyweight:"fatFreeMass", fatfree:"fatFreeMass",
+  basalmetabolicrate:"bmr", basalmetabolism:"bmr",
+  subcutaneousfatrate:"subcutaneousFat", visceralfatindex:"visceralFat",
+  musclemasskg:"muscleMass", bodymassindex:"bmi", bodyage:"metabolicAge"
+};
+function scaleKeyFor(normalised){
+  const direct = BODY_METRICS.find(m => m.key.toLowerCase() === normalised);
+  if (direct) return direct.key;
+  return SCALE_ALIASES[normalised] || null;
+}
+/* "Body Fat(%)" -> { name:"bodyfat", unit:"%" };  "Protein (%)" -> same shape */
+function splitHeaderCell(cell){
+  const raw = String(cell||"").trim();
+  const m = raw.match(/^([^(]*)\(([^)]*)\)\s*$/);
+  const namePart = m ? m[1] : raw;
+  const unit = m ? m[2].trim().toLowerCase() : "";
+  return { name: namePart.toLowerCase().replace(/[^a-z0-9]/g,""), unit };
+}
+/* quote-aware single-line CSV split (Remarks can legitimately contain commas) */
+function parseCsvLine(line){
+  const out = []; let cur = "", inQ = false;
+  for (let i=0;i<line.length;i++){
+    const c = line[i];
+    if (inQ){
+      if (c === '"'){ if (line[i+1] === '"'){ cur += '"'; i++; } else inQ = false; }
+      else cur += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ","){ out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out.map(v=>v.trim());
+}
+function isBlankCell(v){
+  const t = String(v==null?"":v).trim().toLowerCase();
+  return t==="" || t==="--" || t==="-" || t==="n/a" || t==="na" || t==="null";
+}
+/* RENPHO writes UK-style dd/mm/yyyy; ISO and dotted forms are accepted too. */
+function parseScaleDate(str){
+  const t = String(str||"").trim();
+  if (!t) return null;
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${String(+m[2]).padStart(2,"0")}-${String(+m[3]).padStart(2,"0")}`;
+  m = t.match(/^(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})/);
+  if (m){
+    let a = +m[1], b = +m[2];
+    // day-first unless the first number can only be a month
+    if (a > 12 && b <= 12){ /* dd/mm */ }
+    else if (b > 12 && a <= 12){ const tmp = a; a = b; b = tmp; }   // mm/dd
+    if (a<1 || a>31 || b<1 || b>12) return null;
+    return `${m[3]}-${String(b).padStart(2,"0")}-${String(a).padStart(2,"0")}`;
+  }
+  return null;
+}
+function convertMass(value, unit){
+  if (unit==="lb" || unit==="lbs") return value * LB_TO_KG;
+  if (unit==="st") return value * ST_TO_KG;
+  return value;
+}
+
+/* Turn the file text into { readings, ignored, badDates, noData }. */
+function parseScaleCsv(text){
+  const lines = String(text||"").split(/\r\n|\r|\n/).filter(l=>l.trim()!=="");
+  if (!lines.length) throw new Error("The file is empty");
+
+  // find the header row: the first line that maps at least two known metrics
+  let headerIdx = -1, cols = null, dateIdx = -1, timeIdx = -1, ignored = [];
+  for (let i=0; i<Math.min(lines.length,10); i++){
+    const cells = parseCsvLine(lines[i]);
+    const mapped = [], skipped = [];
+    let di = -1, ti = -1;
+    cells.forEach((cell,idx)=>{
+      const { name, unit } = splitHeaderCell(cell);
+      if (name==="date"){ di = idx; return; }
+      if (name==="time"){ ti = idx; return; }
+      const key = scaleKeyFor(name);
+      if (key) mapped.push({ idx, key, unit });
+      else if (cell.trim()) skipped.push(cell.trim());
+    });
+    if (di >= 0 && mapped.length >= 1){
+      headerIdx = i; cols = mapped; dateIdx = di; timeIdx = ti; ignored = skipped; break;
+    }
+  }
+  if (headerIdx < 0) throw new Error("Couldn't find a header row with a Date column and recognisable measurements");
+
+  const byDate = {};
+  let badDates = 0, noData = 0;
+  for (let i=headerIdx+1; i<lines.length; i++){
+    const cells = parseCsvLine(lines[i]);
+    const iso = parseScaleDate(cells[dateIdx]);
+    if (!iso){ badDates++; continue; }
+    const metrics = {};
+    cols.forEach(c=>{
+      const raw = cells[c.idx];
+      if (isBlankCell(raw)) return;
+      const v = parseFloat(String(raw).replace(/[^0-9.\-]/g,""));
+      if (!isFinite(v)) return;
+      metrics[c.key] = MASS_KEYS.indexOf(c.key)>=0 ? round(convertMass(v, c.unit), 2) : v;
+    });
+    if (!Object.keys(metrics).length){ noData++; continue; }
+    const time = timeIdx>=0 ? String(cells[timeIdx]||"").trim() : "";
+    // later reading on the same day wins
+    const prev = byDate[iso];
+    if (!prev || time >= prev.time) byDate[iso] = { date:iso, time, metrics };
+  }
+  const readings = Object.keys(byDate).sort().map(k=>byDate[k]);
+  if (!readings.length) throw new Error("No usable rows — dates or measurements couldn't be read");
+  return { readings, ignored, badDates, noData, mappedCount: cols.length };
+}
+
+let SCALE_IMPORT = null;   // parsed file awaiting confirmation
+
+function readScaleCsv(input){
+  const file = input.files && input.files[0];
+  input.value = "";
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      SCALE_IMPORT = parseScaleCsv(reader.result);
+      openScaleImportSheet(file.name);
+    } catch(e){
+      openSheet(`<h3>Couldn't read that file</h3>
+        <p class="hint" style="margin-bottom:12px;">${esc(e.message||String(e))}</p>
+        <p class="hint" style="margin-bottom:12px;">Export again from the RENPHO app using <b>Profile ▸ Export data</b> and pick CSV.</p>
+        <button class="btn ghost full" onclick="closeSheet()">Close</button>`);
+    }
+  };
+  reader.onerror = () => toast("Couldn't read the file");
+  reader.readAsText(file);
+}
+
+function scaleImportSplit(){
+  const existing = {};
+  STATE.bodyCompositionLogs.forEach(l=>existing[l.date]=1);
+  const fresh = SCALE_IMPORT.readings.filter(r=>!existing[r.date]);
+  const dupes = SCALE_IMPORT.readings.filter(r=>existing[r.date]);
+  return { fresh, dupes };
+}
+function openScaleImportSheet(filename){
+  const p = SCALE_IMPORT, { fresh, dupes } = scaleImportSplit();
+  const first = p.readings[0].date, last = p.readings[p.readings.length-1].date;
+  const skippedBits = [];
+  if (p.badDates) skippedBits.push(`${p.badDates} row${p.badDates===1?"":"s"} with an unreadable date`);
+  if (p.noData) skippedBits.push(`${p.noData} empty row${p.noData===1?"":"s"}`);
+  openSheet(`
+    <h3>Import from your scales</h3>
+    <p class="hint" style="margin-bottom:12px;">${esc(filename||"CSV")} — ${p.readings.length} reading${p.readings.length===1?"":"s"}
+      from ${prettyDate(first)} to ${prettyDate(last)}, ${p.mappedCount} measurements per reading.</p>
+
+    <div class="card" style="margin-bottom:12px;">
+      <div class="kv"><span class="k">New days</span><span class="v">${fresh.length}</span></div>
+      <div class="kv"><span class="k">Days already logged</span><span class="v">${dupes.length}</span></div>
+      ${skippedBits.length?`<div class="kv"><span class="k">Skipped</span><span class="v">${esc(skippedBits.join(" · "))}</span></div>`:""}
+    </div>
+
+    <div class="eyebrow" style="margin-bottom:6px;">Most recent readings</div>
+    ${p.readings.slice(-4).reverse().map(r=>`
+      <div class="kv"><span class="k">${prettyDate(r.date)}</span>
+        <span class="v">${r.metrics.weight!=null?fmt(r.metrics.weight,2)+" kg":"–"}${r.metrics.bodyFat!=null?` · ${fmt(r.metrics.bodyFat,1)}% fat`:""}</span></div>`).join("")}
+
+    <button class="btn primary full" style="margin-top:14px;" onclick="applyScaleImport('new')" ${fresh.length?"":"disabled"}>
+      ${fresh.length?`Add ${fresh.length} new day${fresh.length===1?"":"s"}`:"Nothing new to add"}</button>
+    ${dupes.length?`<button class="btn ghost full" style="margin-top:8px;" onclick="applyScaleImport('all')">
+      Import all ${p.readings.length}, replacing the ${dupes.length} existing</button>`:""}
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+    ${p.ignored.length?`<p class="hint" style="margin-top:12px;">Columns ignored: ${esc(p.ignored.slice(0,6).join(", "))}${p.ignored.length>6?` and ${p.ignored.length-6} more`:""}.</p>`:""}
+  `);
+}
+function applyScaleImport(mode){
+  if (!SCALE_IMPORT){ closeSheet(); return; }
+  const rows = mode==="all" ? SCALE_IMPORT.readings : scaleImportSplit().fresh;
+  let added = 0, updated = 0;
+  rows.forEach(r=>{
+    let log = STATE.bodyCompositionLogs.find(l=>l.date===r.date);
+    if (!log){
+      log = { id:uid("body"), date:r.date, source:"scale", createdAt:Date.now() };
+      STATE.bodyCompositionLogs.push(log);
+      added++;
+    } else updated++;
+    BODY_METRICS.forEach(m => { if (r.metrics[m.key]!=null) log[m.key] = r.metrics[m.key]; });
+    if (r.time) log.readingTime = r.time;
+    log.source = log.source || "scale";
+    log.updatedAt = Date.now();
+  });
+  save();
+  SCALE_IMPORT = null;
+  closeSheet();
+  const parts = [];
+  if (added) parts.push(`${added} added`);
+  if (updated) parts.push(`${updated} updated`);
+  toast(parts.length?parts.join(" · "):"Nothing to import");
+  navigate("body");
+}
+
+/* =====================================================================
+   BOOT
+   ===================================================================== */
 (async function boot(){
   try { await loadState(); }
   catch(e){ console.warn("Load failed, using defaults", e); STATE = defaultState(); }
