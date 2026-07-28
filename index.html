@@ -884,6 +884,9 @@ function num(v,dflt=0){ const n=parseFloat(v); return isFinite(n)?n:dflt; }
 function round(n,dp=1){ const f=Math.pow(10,dp); return Math.round(n*f)/f; }
 function fmt(n,dp=1){ if(n==null||!isFinite(n)) return "–"; return round(n,dp).toLocaleString("en-GB"); }
 function clamp(n,a,b){ return Math.max(a,Math.min(b,n)); }
+/* fmt() is for display (it groups thousands); number inputs need a bare
+   numeric string or the browser discards the value. */
+function numVal(n,dp=1){ if(n==null||!isFinite(n)) return ""; return String(round(n,dp)); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function byDateDesc(a,b){ return a.date<b.date?1:a.date>b.date?-1:(b.createdAt||0)-(a.createdAt||0); }
 function $(sel,root=document){ return root.querySelector(sel); }
@@ -2048,7 +2051,7 @@ function nutritionAverages(days){
 
 function foodEntryLine(f){
   const macro = `${fmt(num(f.calories),0)} kcal · P${fmt(num(f.protein),0)} C${fmt(num(f.carbs),0)} F${fmt(num(f.fat),0)}`;
-  const amt = f.basis==="meal" ? "meal" : (f.amountG!=null ? `${fmt(f.amountG,0)} g` : "");
+  const amt = f.amountG!=null ? `${fmt(f.amountG,0)} g` : (f.basis==="meal" ? "whole meal" : "");
   return `<div class="list-item">
     <div class="li-ic">${f.basis==="meal"?"🍱":(f.barcode?"🥫":"🍎")}</div>
     <div class="li-main"><div class="li-title">${esc(f.name||"Food")}</div>
@@ -2733,7 +2736,8 @@ function foodRows(){ return STATE.foodLogs.map(f=>{ const o={}; Object.keys(f).f
 function mealItemRows(){
   const rows=[];
   STATE.meals.forEach(m=>(m.items||[]).forEach(it=>rows.push({
-    meal:m.name, item:it.name, amountG:it.amountG, barcode:it.barcode||"",
+    meal:m.name, preparedWeightG:m.cookedWeightG!=null?m.cookedWeightG:"",
+    item:it.name, amountG:it.amountG, barcode:it.barcode||"",
     calories:it.calories, protein:it.protein, carbs:it.carbs, fat:it.fat,
     satFat:it.satFat, sugar:it.sugar, fibre:it.fibre, salt:it.salt
   })));
@@ -3236,7 +3240,7 @@ function openProductForm(prod, preset){
         ? `<p class="hint" style="margin:6px 0 12px;">Figures from the last time you logged this. Adjust them if the portion was different.</p>`
         : `<p class="hint" style="margin:6px 0 12px;">No per-100g data for this one — enter the macros for the amount you ate.</p>`}
     <label class="field"><span>Amount eaten (g)</span>
-      <input class="input" id="pfAmt" type="number" inputmode="decimal" value="${fmt(startG,0)}" oninput="recalcMacros()"></label>
+      <input class="input" id="pfAmt" type="number" inputmode="decimal" value="${numVal(startG,0)}" oninput="recalcMacros()"></label>
     ${prod.servingG?`<div class="row wrap" style="gap:6px;margin:-4px 0 10px;">
       <button class="btn sm ghost" onclick="setAmt(${prod.servingG})">1 serving</button>
       <button class="btn sm ghost" onclick="setAmt(${prod.servingG*2})">2 servings</button>
@@ -3244,7 +3248,7 @@ function openProductForm(prod, preset){
     <div class="serv-grid">
       ${FOOD_NUTRIENTS.map(k=>{ const meta=NUTRIENTS.find(n=>n.key===k);
         return `<label class="field"><span>${meta.lab} (${meta.unit})</span>
-          <input class="input" id="pf_${k}" type="number" inputmode="decimal" value="${fmt(scaled[k]||0, k==="calories"?0:1)}"></label>`;
+          <input class="input" id="pf_${k}" type="number" inputmode="decimal" value="${numVal(scaled[k]||0, k==="calories"?0:1)}"></label>`;
       }).join("")}
     </div>
     <label class="field"><span>Name</span><input class="input" id="pfName" type="text" value="${esc(prod.name)}"></label>
@@ -3252,11 +3256,11 @@ function openProductForm(prod, preset){
     <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
   `);
 }
-function setAmt(g){ const a=$("#pfAmt"); if(a){ a.value=fmt(g,0); recalcMacros(); } }
+function setAmt(g){ const a=$("#pfAmt"); if(a){ a.value=numVal(g,0); recalcMacros(); } }
 function recalcMacros(){
   if (!PROD || !PROD.hasPer100) return;           // manual macros: leave as typed
   const scaled = scaleFromPer100(PROD.per100, num($("#pfAmt").value));
-  FOOD_NUTRIENTS.forEach(k => { const el=$("#pf_"+k); if(el) el.value = fmt(scaled[k]||0, k==="calories"?0:1); });
+  FOOD_NUTRIENTS.forEach(k => { const el=$("#pf_"+k); if(el) el.value = numVal(scaled[k]||0, k==="calories"?0:1); });
 }
 function saveProductEntry(){
   const gEl = $("#pfAmt");
@@ -3508,8 +3512,57 @@ function mealTotals(m){
   (m.items||[]).forEach(it=>FOOD_NUTRIENTS.forEach(k=>{ t[k]+=num(it[k]); }));
   return t;
 }
+/* The weight of the finished dish once it's cooked. Cooking drives water off
+   (or soaks it up), so this is measured on the scales, not summed from the
+   ingredients — which is exactly why it has to be entered separately. */
+function mealCookedWeight(m){
+  const w = m && m.cookedWeightG!=null ? num(m.cookedWeightG) : 0;
+  return w > 0 ? w : null;
+}
+/* What the ingredients weighed going in — shown as a sanity check only. */
+function mealItemsWeight(m){
+  let w = 0, known = false;
+  (m && m.items || []).forEach(it => { if (it.amountG!=null){ w += num(it.amountG); known = true; } });
+  return known ? w : null;
+}
+/* Prepared meal expressed per 100 g, so a portion scales exactly like a
+   scanned product does. */
+function mealPer100(m){
+  const w = mealCookedWeight(m);
+  if (!w) return null;
+  const t = mealTotals(m), o = {};
+  FOOD_NUTRIENTS.forEach(k => o[k] = num(t[k]) / w * 100);
+  return o;
+}
+/* Macros for the portion actually eaten: (portion / prepared weight) x total. */
+function mealPortionMacros(m, grams){
+  const per100 = mealPer100(m);
+  if (!per100) return mealTotals(m);
+  return scaleFromPer100(per100, grams);
+}
+function mealPortionLabel(m, grams){
+  const w = mealCookedWeight(m);
+  if (!w || !grams) return "";
+  const pct = grams / w * 100;
+  return `${fmt(pct,0)}% of the meal`;
+}
+function saveMealWeight(){
+  const m = STATE.meals.find(x=>x.id===EDIT_MEAL); if(!m) return;
+  const el = $("#mealWeight");
+  const v = el ? el.value : "";
+  m.cookedWeightG = (v==="" ? null : Math.max(0, num(v)));
+  m.updatedAt = Date.now();
+  save(); navigate("mealEdit");
+}
+function useRawWeight(){
+  const m = STATE.meals.find(x=>x.id===EDIT_MEAL); if(!m) return;
+  const raw = mealItemsWeight(m);
+  if (!raw){ toast("No ingredient weights to add up"); return; }
+  m.cookedWeightG = round(raw,0); m.updatedAt = Date.now();
+  save(); toast("Set from ingredients"); navigate("mealEdit");
+}
 function newMeal(){
-  const m = { id:uid("meal"), name:"New meal", createdAt:Date.now(), updatedAt:Date.now(), items:[] };
+  const m = { id:uid("meal"), name:"New meal", createdAt:Date.now(), updatedAt:Date.now(), cookedWeightG:null, items:[] };
   STATE.meals.push(m); EDIT_MEAL=m.id; ADD_TARGET={kind:"day"}; save(); closeSheet(); navigate("mealEdit");
 }
 function editMeal(id){ EDIT_MEAL=id; navigate("mealEdit"); }
@@ -3518,23 +3571,79 @@ function renameMeal(){ const m=STATE.meals.find(x=>x.id===EDIT_MEAL); if(!m)retu
 function deleteMealItem(id){ const m=STATE.meals.find(x=>x.id===EDIT_MEAL); if(!m)return; m.items=m.items.filter(i=>i.id!==id); m.updatedAt=Date.now(); save(); navigate("mealEdit"); }
 function mealScan(){ ADD_TARGET={kind:"meal", id:EDIT_MEAL}; openScanSheet(); }
 function mealAddFood(){ ADD_TARGET={kind:"meal", id:EDIT_MEAL}; openFoodItemSheet(); }
-function logMeal(mealId){
+/* Called with no grams: if the meal has a prepared weight, ask how much was
+   eaten first; otherwise log the whole thing as before. */
+function logMeal(mealId, grams){
   const m = STATE.meals.find(x=>x.id===mealId); if(!m) return;
-  const t = mealTotals(m), d = screenDate("nutrition");
+  const w = mealCookedWeight(m);
+  if (w && grams==null){ openMealPortionSheet(mealId); return; }
+
+  const d = screenDate("nutrition");
+  const useGrams = (w && grams!=null) ? num(grams) : null;
+  const macros = useGrams!=null ? mealPortionMacros(m, useGrams) : mealTotals(m);
   STATE.foodLogs.push(Object.assign({ id:uid("food"), date:d, source:"food", createdAt:Date.now(),
-    name:m.name||"Meal", basis:"meal", amountG:null, per100:null, mealId:m.id }, t));
-  save(); closeSheet(); toast("Meal logged"); navigate("nutrition");
+    name:m.name||"Meal", basis:"meal", amountG:useGrams, per100:mealPer100(m), mealId:m.id }, macros));
+  save(); closeSheet();
+  toast(useGrams!=null ? `Logged ${fmt(useGrams,0)} g of ${m.name||"meal"}` : "Meal logged");
+  navigate("nutrition");
+}
+let CURRENT_PORTION_MEAL = null;   // meal whose portion sheet is open
+function openMealPortionSheet(mealId){
+  const m = STATE.meals.find(x=>x.id===mealId); if(!m) return;
+  CURRENT_PORTION_MEAL = m;
+  const w = mealCookedWeight(m), t = mealTotals(m);
+  const half = round(w/2,0), third = round(w/3,0), quarter = round(w/4,0);
+  openSheet(`
+    <h3>How much did you have?</h3>
+    <p class="hint" style="margin:-4px 0 12px;">${esc(m.name||"Meal")} came to ${fmt(w,0)} g prepared and
+      ${fmt(t.calories,0)} kcal in total — that's ${fmt(mealPer100(m).calories,0)} kcal per 100 g.</p>
+    <label class="field"><span>Weight on your plate (g)</span>
+      <input class="input" id="mpAmt" type="number" inputmode="decimal" value="${numVal(half,0)}" oninput="recalcPortion()"></label>
+    <div class="row wrap" style="gap:6px;margin:-4px 0 12px;">
+      <button class="btn sm ghost" onclick="setPortion(${quarter})">Quarter</button>
+      <button class="btn sm ghost" onclick="setPortion(${third})">Third</button>
+      <button class="btn sm ghost" onclick="setPortion(${half})">Half</button>
+      <button class="btn sm ghost" onclick="setPortion(${round(w,0)})">All of it</button>
+    </div>
+    <div class="card" id="mpPreview" style="margin-bottom:12px;">${mealPortionPreview(m, half)}</div>
+    <button class="btn primary full" onclick="confirmMealPortion('${m.id}')">Add to ${esc(prettyDate(screenDate("nutrition")))}</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="logMeal('${m.id}', ${round(w,0)})">Log the whole meal</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+  `);
+}
+function mealPortionPreview(m, grams){
+  const p = mealPortionMacros(m, grams);
+  return `<div class="row spread" style="align-items:baseline;">
+      <span class="eyebrow">That works out as</span>
+      <span class="hint">${esc(mealPortionLabel(m, grams))}</span>
+    </div>
+    <div class="stat-big" style="margin:6px 0 8px;">${fmt(p.calories,0)}<span class="m-unit" style="font-size:.8rem;"> kcal</span></div>
+    <div class="hint">P ${fmt(p.protein,1)} g · C ${fmt(p.carbs,1)} g · F ${fmt(p.fat,1)} g</div>`;
+}
+function setPortion(g){ const el=$("#mpAmt"); if(el){ el.value=numVal(g,0); recalcPortion(); } }
+function recalcPortion(){
+  const box = $("#mpPreview"), el = $("#mpAmt");
+  if (!box || !el || !CURRENT_PORTION_MEAL) return;
+  box.innerHTML = mealPortionPreview(CURRENT_PORTION_MEAL, num(el.value));
+}
+function confirmMealPortion(mealId){
+  const el = $("#mpAmt");
+  const g = el && el.value!=="" ? num(el.value) : 0;
+  if (!(g > 0)){ toast("Enter how much you had"); return; }
+  logMeal(mealId, g);
 }
 function openLogMealSheet(){
   const meals = STATE.meals.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
   openSheet(`
     <h3>Log a meal</h3>
-    ${meals.length ? meals.map(m=>{ const t=mealTotals(m);
+    ${meals.length ? meals.map(m=>{ const t=mealTotals(m), mw=mealCookedWeight(m);
       return `<div class="list-item">
         <div class="li-ic">🍱</div>
         <div class="li-main"><div class="li-title">${esc(m.name||"Meal")}</div>
-          <div class="li-sub">${(m.items||[]).length} items · ${fmt(t.calories,0)} kcal</div></div>
-        <div class="li-actions"><button class="btn sm primary" onclick="logMeal('${m.id}')">Log</button></div>
+          <div class="li-sub">${mw
+            ? `${fmt(mealPer100(m).calories,0)} kcal per 100 g · ${fmt(mw,0)} g prepared`
+            : `${(m.items||[]).length} items · ${fmt(t.calories,0)} kcal`}</div></div>
+        <div class="li-actions"><button class="btn sm primary" onclick="logMeal('${m.id}')">${mw?"Portion":"Log"}</button></div>
       </div>`; }).join("")
       : `<p class="hint" style="margin-bottom:12px;">No meals yet — create one from a set of foods to log them together.</p>`}
     <button class="btn primary full" style="margin-top:10px;" onclick="newMeal()">＋ New meal</button>
@@ -3554,7 +3663,7 @@ SCREENS.meals = {
             <div class="li-ic">🍱</div>
             <div class="li-main" style="cursor:pointer;" onclick="editMeal('${m.id}')">
               <div class="li-title">${esc(m.name||"Meal")}</div>
-              <div class="li-sub">${(m.items||[]).length} items · ${fmt(t.calories,0)} kcal · P${fmt(t.protein,0)} C${fmt(t.carbs,0)} F${fmt(t.fat,0)}</div></div>
+              <div class="li-sub">${(m.items||[]).length} items · ${fmt(t.calories,0)} kcal${mealCookedWeight(m)?` · ${fmt(mealCookedWeight(m),0)} g prepared`:""}</div></div>
             <div class="li-actions">
               <button class="iconbtn" onclick="editMeal('${m.id}')">✎</button>
               <button class="iconbtn" onclick="deleteMeal('${m.id}')">🗑️</button></div>
@@ -3572,11 +3681,25 @@ SCREENS.mealEdit = {
     const m = STATE.meals.find(x=>x.id===EDIT_MEAL);
     if (!m) return `<div class="empty"><span class="big">🍱</span>Meal not found.</div><button class="btn ghost full" onclick="navigate('meals')">Back to meals</button>`;
     const t = mealTotals(m);
+    const w = mealCookedWeight(m), raw = mealItemsWeight(m), p100 = mealPer100(m);
     return `
       <div class="card">
         <label class="field"><span>Meal name</span>
           <input class="input" id="mealName" type="text" value="${esc(m.name||"")}" onchange="renameMeal()"></label>
         <div class="kv"><span class="k">Total</span><span class="v">${fmt(t.calories,0)} kcal · P${fmt(t.protein,1)} C${fmt(t.carbs,1)} F${fmt(t.fat,1)}</span></div>
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">Prepared weight</div>
+        <p class="hint" style="margin:7px 0 11px;">Weigh the finished dish and put the total here. When you log it, you enter what's on your plate and the macros are worked out from your share.</p>
+        <label class="field"><span>Weight once cooked (g)</span>
+          <input class="input" id="mealWeight" type="number" inputmode="decimal" value="${w?numVal(w,0):""}"
+                 placeholder="e.g. 1200" onchange="saveMealWeight()"></label>
+        ${raw?`<button class="btn sm ghost" onclick="useRawWeight()">Use ingredient total (${fmt(raw,0)} g)</button>`:""}
+        ${w?`<div class="divider"></div>
+          <div class="kv"><span class="k">Per 100 g</span><span class="v">${fmt(p100.calories,0)} kcal · P${fmt(p100.protein,1)} C${fmt(p100.carbs,1)} F${fmt(p100.fat,1)}</span></div>
+          ${raw?`<p class="hint" style="margin-top:8px;">Ingredients went in at ${fmt(raw,0)} g, so it ${raw>w?`lost ${fmt(raw-w,0)} g`:raw<w?`gained ${fmt(w-raw,0)} g`:"held its weight"} in cooking.</p>`:""}`
+        :`<p class="hint" style="margin-top:9px;">Leave this empty and logging the meal adds the whole thing, as it does now.</p>`}
       </div>
       <div class="card flush">
         <div style="padding:14px 16px 6px"><h3 style="margin:0">Items</h3></div>
