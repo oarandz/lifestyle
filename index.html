@@ -687,6 +687,110 @@ function defaultSettings(){
 }
 
 /* Starter drink database. coeff = hydration fraction (can be negative). */
+/* ---------------------------------------------------------------------
+   Nutrition for each stock drink, per its default serving (not per 100 ml).
+   Figures are typical UK supermarket / high-street values. Sugar is included
+   here so it stays consistent with the carbohydrate figure.
+   --------------------------------------------------------------------- */
+const DRINK_NUTRITION = {
+  // Water
+  "Mineral water":      {},
+  "Sparkling water":    {},
+  "Lemon water":        { kcal:3,   carbs:0.8,  sugar:0.5 },
+  "Coconut water":      { kcal:45,  carbs:11,   sugar:9,   protein:0.5, salt:0.25 },
+  // Milk & alternatives
+  "Yoghurt":            { kcal:100, protein:9,   carbs:12, sugar:11, fat:1.5, satFat:1,   salt:0.15 },
+  "Milkshake":          { kcal:270, protein:9,   carbs:42, sugar:38, fat:7,   satFat:4.5, salt:0.4 },
+  "Kefir":              { kcal:80,  protein:6.6, carbs:8,  sugar:8,  fat:2,   satFat:1.3, salt:0.2 },
+  "Soy milk":           { kcal:63,  protein:7.5, carbs:3,  sugar:3,  fat:4.3, satFat:0.6, salt:0.25 },
+  "Almond milk":        { kcal:33,  protein:1.3, carbs:1,  sugar:1,  fat:2.8, satFat:0.3, salt:0.2 },
+  "Chocolate milk":     { kcal:190, protein:8,   carbs:26, sugar:24, fat:5,   satFat:3,   salt:0.3 },
+  "Oat milk":           { kcal:115, protein:2.5, carbs:17, sugar:8,  fat:3.8, satFat:0.4, fibre:2, salt:0.25 },
+  "Rice milk":          { kcal:120, protein:0.8, carbs:24, sugar:15, fat:2.5, satFat:0.3, salt:0.25 },
+  // Coffee
+  "Latte":              { kcal:120, protein:8,   carbs:12,  sugar:12, fat:4.5, satFat:3,   salt:0.2 },
+  "Cappuccino":         { kcal:80,  protein:5,   carbs:7.5, sugar:7.5,fat:3,   satFat:2,   salt:0.15 },
+  "Iced coffee":        { kcal:110, protein:4,   carbs:17,  sugar:16, fat:3,   satFat:2,   salt:0.15 },
+  "Espresso":           { kcal:3,   protein:0.2, carbs:0.5 },
+  "Coffee with milk":   { kcal:45,  protein:2.5, carbs:4,   sugar:4,  fat:2,   satFat:1.2, salt:0.08 },
+  "Cold brew":          { kcal:5,   protein:0.3, carbs:1 },
+  "Frappe":             { kcal:280, protein:5,   carbs:48,  sugar:44, fat:8,   satFat:5,   salt:0.3 },
+  "Americano":          { kcal:8,   protein:0.4, carbs:1.5 },
+  "Mocha":              { kcal:230, protein:8,   carbs:32,  sugar:29, fat:8,   satFat:5,   salt:0.25 },
+  "Decaf coffee":       { kcal:5,   protein:0.3, carbs:1 },
+  // Tea & cocoa
+  "Tea":                { kcal:20,  protein:1.2, carbs:2,   sugar:2,  fat:0.8, satFat:0.5, salt:0.05 },
+  "Iced tea":           { kcal:75,  carbs:19,    sugar:18,  salt:0.02 },
+  "Green tea":          { kcal:2,   carbs:0.4 },
+  "Matcha":             { kcal:8,   protein:0.5, carbs:1.5 },
+  "Herbal tea":         { kcal:2,   carbs:0.4 },
+  "Hot chocolate":      { kcal:190, protein:7,   carbs:27,  sugar:25, fat:6,   satFat:3.8, fibre:1,   salt:0.3 },
+  "Cocoa":              { kcal:120, protein:6,   carbs:15,  sugar:13, fat:4,   satFat:2.5, fibre:1.5, salt:0.25 },
+  "Bubble tea":         { kcal:300, protein:3,   carbs:65,  sugar:48, fat:4,   satFat:3,   salt:0.2 },
+  "Mate":               { kcal:5,   carbs:1 },
+  "Milk tea":           { kcal:110, protein:4,   carbs:16,  sugar:15, fat:3,   satFat:2,   salt:0.15 },
+  "Oolong tea":         { kcal:2,   carbs:0.4 },
+  "Barley tea":         { kcal:3,   carbs:0.7 },
+  // Juices
+  "Smoothie":           { kcal:165, protein:2,   carbs:36, sugar:32, fat:0.6, fibre:4,   salt:0.02 },
+  "Orange juice":       { kcal:110, protein:1.7, carbs:25, sugar:22, fibre:0.5 },
+  "Apple juice":        { kcal:115, protein:0.3, carbs:28, sugar:26 },
+  "Squash":             { kcal:20,  carbs:4.5,   sugar:3.5 },
+  "Vegetable juice":    { kcal:55,  protein:2,   carbs:11, sugar:8,  fibre:1.5, salt:0.6 },
+  "Aloe vera":          { kcal:50,  carbs:12,    sugar:11 },
+  // Soda
+  "Cola":               { kcal:139, carbs:35, sugar:35, salt:0.03 },
+  "Diet cola":          { kcal:1,   carbs:0 },
+  "Lemonade":           { kcal:125, carbs:31, sugar:30 },
+  "Tonic water":        { kcal:68,  carbs:17, sugar:17 },
+  "Ginger ale":         { kcal:130, carbs:32, sugar:32 },
+  // Sport & wellness
+  "Energy drink":       { kcal:113, carbs:28,   sugar:27 },
+  "Sports drink":       { kcal:130, carbs:32,   sugar:30, salt:0.5 },
+  "Protein shake":      { kcal:200, protein:30, carbs:8,  sugar:4, fat:3, satFat:1, salt:0.4 },
+  "Kombucha":           { kcal:45,  carbs:11,   sugar:10 },
+  "Electrolyte drink":  { kcal:25,  carbs:6,    sugar:5,  salt:1 },
+  "Vitamin drink":      { kcal:90,  carbs:22,   sugar:20 },
+  "Greens":             { kcal:60,  protein:3,  carbs:9,  sugar:4, fibre:3, salt:0.3 },
+  "ACV drink":          { kcal:25,  carbs:6,    sugar:4 },
+  // Soups / hidden drinks
+  "Broth":              { kcal:30,  protein:3, carbs:2,  fat:1,   salt:1.4 },
+  "Miso soup":          { kcal:45,  protein:3, carbs:5,  fat:1.5, salt:2 },
+  "Chicory":            { kcal:15,  protein:0.5, carbs:3, fibre:1 },
+  "Turkish coffee":     { kcal:10,  carbs:2,   sugar:1 },
+  "Berry drink":        { kcal:100, carbs:24,  sugar:22 },
+  "Kompot":             { kcal:90,  carbs:22,  sugar:20 },
+  "Kissel":             { kcal:110, carbs:27,  sugar:22 },
+  "Sugarcane juice":    { kcal:180, carbs:45,  sugar:43 },
+  "Kvass":              { kcal:70,  carbs:17,  sugar:14 },
+  "Buttermilk":         { kcal:100, protein:8, carbs:12, sugar:12, fat:2, satFat:1.3, salt:0.6 },
+  "Ayran":              { kcal:90,  protein:6, carbs:8,  sugar:8,  fat:4, satFat:2.5, salt:1 },
+  // Alcohol (ethanol itself carries ~7 kcal per gram)
+  "Beer":                  { kcal:215, protein:1.5, carbs:17, sugar:0.5 },
+  "Wine":                  { kcal:160, carbs:5,  sugar:1 },
+  "Strong alcohol":        { kcal:56,  carbs:0 },
+  "Non-alcoholic cocktail":{ kcal:150, carbs:36, sugar:34 },
+  "Cocktail":              { kcal:230, carbs:22, sugar:20 },
+  "Sparkling wine":        { kcal:95,  carbs:2,  sugar:1.5 },
+  "Cider":                 { kcal:230, carbs:26, sugar:25 },
+  "Non-alcoholic beer":    { kcal:75,  carbs:16, sugar:6 },
+  // Other
+  "Other":              {}
+};
+/* Map a nutrition record onto the drink object (kcal -> calories). */
+function applyDrinkNutrition(drink){
+  const n = DRINK_NUTRITION[drink.name] || {};
+  drink.calories = num(n.kcal);
+  drink.protein  = num(n.protein);
+  drink.carbs    = num(n.carbs);
+  drink.fat      = num(n.fat);
+  drink.satFat   = num(n.satFat);
+  drink.fibre    = num(n.fibre);
+  drink.salt     = num(n.salt);
+  if (n.sugar!=null) drink.sugar = n.sugar;   // keep sugar and carbs coherent
+  return drink;
+}
+
 function defaultDrinks(){
   const D = (name,category,pct,opt={}) => ({
     id: uid("drk"), name, category, hydrationPct:pct,
@@ -720,6 +824,7 @@ function defaultDrinks(){
     D("Mocha","Coffee",72,{icon:"☕",ml:300,unit:"cup",caffeine:50,sugar:9}),
     D("Decaf coffee","Coffee",85,{icon:"☕",ml:250,unit:"cup"}),
     // Tea & cocoa
+    D("Tea","Tea & cocoa",90,{icon:"🍵",ml:250,unit:"mug",caffeine:47}),
     D("Iced tea","Tea & cocoa",78,{icon:"🧊",ml:300,unit:"glass",caffeine:12,sugar:6}),
     D("Green tea","Tea & cocoa",90,{icon:"🍵",ml:250,unit:"cup",caffeine:18}),
     D("Matcha","Tea & cocoa",85,{icon:"🍵",ml:250,unit:"cup",caffeine:35}),
@@ -733,6 +838,8 @@ function defaultDrinks(){
     D("Barley tea","Tea & cocoa",93,{icon:"🍵",ml:250,unit:"cup"}),
     // Juices
     D("Smoothie","Juices",33,{icon:"🥤",ml:300,unit:"glass"}),
+    D("Orange juice","Juices",70,{icon:"🍊",ml:250,unit:"glass"}),
+    D("Apple juice","Juices",70,{icon:"🍎",ml:250,unit:"glass"}),
     D("Squash","Juices",65,{icon:"🧃",ml:250,unit:"glass",sugar:3.5}),
     D("Vegetable juice","Juices",70,{icon:"🥕",ml:250,unit:"glass",sugar:3}),
     D("Aloe vera","Juices",65,{icon:"🌵",ml:250,unit:"glass",sugar:8}),
@@ -774,7 +881,7 @@ function defaultDrinks(){
     D("Non-alcoholic beer","Alcohol",60,{icon:"🍺",ml:330,unit:"bottle"}),
     // Other
     D("Other","Other",50,{icon:"🥤",ml:250,unit:"glass"})
-  ];
+  ].map(applyDrinkNutrition);
 }
 
 function defaultState(){
@@ -860,8 +967,30 @@ function mergeDefaults(s){
   ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs","drinkDatabase"]
     .forEach(k => { if(!Array.isArray(s[k])) s[k] = d[k]; });
   if (!s.drinkDatabase.length) s.drinkDatabase = d.drinkDatabase;
+  upgradeDrinkDatabase(s, d);
   s.version = 1;
   return s;
+}
+/* Drinks saved before they carried nutrition get it filled in from the stock
+   table by name. Anything the user added themselves keeps whatever it has and
+   has its calories estimated from its sugar and alcohol, so nothing reads as
+   zero. Stock drinks that didn't exist yet are appended. */
+function upgradeDrinkDatabase(s, d){
+  const have = {};
+  s.drinkDatabase.forEach(dr => {
+    if (dr && dr.name) have[String(dr.name).toLowerCase()] = 1;
+    if (!dr || dr.calories!=null) return;                  // already upgraded
+    if (DRINK_NUTRITION[dr.name]) { applyDrinkNutrition(dr); return; }
+    // a custom drink: keep its sugar, estimate the rest
+    const alcKcal = num(dr.alcoholPct) && dr.defaultMl
+      ? alcoholUnitsFor(dr.defaultMl, dr.alcoholPct) * KCAL_PER_ALCOHOL_UNIT : 0;
+    dr.calories = round(num(dr.sugar) * SUGAR_KCAL_PER_G + alcKcal, 0);
+    if (dr.carbs==null) dr.carbs = num(dr.sugar);
+    ["protein","fat","satFat","fibre","salt"].forEach(k => { if (dr[k]==null) dr[k] = 0; });
+  });
+  (d.drinkDatabase||[]).forEach(stock => {
+    if (!have[String(stock.name).toLowerCase()]) s.drinkDatabase.push(stock);
+  });
 }
 
 /* ---------- small utilities ---------- */
@@ -1708,18 +1837,71 @@ const DRINK_CATEGORIES = [
 /* UK alcohol units = ml × ABV% / 1000 */
 function alcoholUnitsFor(ml, abvPct){ return (num(ml) * num(abvPct)) / 1000; }
 
-/* Build a hydration log entry from a drink + actual ml (scales caffeine/sugar/alcohol). */
-function makeHydrationEntry(drink, ml, date){
+/* Sugar stirred into a hot drink. A rounded teaspoon is about 4 g. */
+const SUGAR_PER_TSP_G = 4;
+const SUGAR_TSP_OPTIONS = [0, 0.5, 1, 1.5, 2, 3];
+/* Which drinks get the "sugars in it?" control — the ones you'd stir it into. */
+function drinkTakesSugar(drink){
+  if (!drink) return false;
+  if (drink.category==="Tea & cocoa" || drink.category==="Coffee") return true;
+  return /\btea\b|\bcoffee\b/i.test(drink.name||"");
+}
+/* One UK alcohol unit is 10 ml of ethanol — about 8 g, so roughly 56 kcal. */
+const KCAL_PER_ALCOHOL_UNIT = 56;
+
+/* One nutrient for a drink, per its default serving. A drink that has never
+   been given full nutrition (an older custom one) still contributes: its
+   calories are estimated from the sugar and alcohol we do know about. */
+function drinkNutrientValue(drink, key){
+  if (drink && drink[key]!=null) return num(drink[key]);
+  if (key==="sugar" || key==="carbs") return num(drink && drink.sugar);
+  if (key==="calories"){
+    const alc = num(drink && drink.alcoholPct) && num(drink && drink.defaultMl)
+      ? alcoholUnitsFor(drink.defaultMl, drink.alcoholPct) * KCAL_PER_ALCOHOL_UNIT : 0;
+    return round(num(drink && drink.sugar) * SUGAR_KCAL_PER_G + alc, 0);
+  }
+  return 0;
+}
+
+/* Build a hydration log entry from a drink + actual ml. Caffeine, alcohol and
+   every nutrient scale with the amount poured; any sugar stirred in is added
+   on top of the drink's own figures. */
+function makeHydrationEntry(drink, ml, date, addedSugarTsp){
   const scale = drink.defaultMl ? (ml / drink.defaultMl) : 1;
+  const tsp = Math.max(0, num(addedSugarTsp));
+  const addedSugar = tsp * SUGAR_PER_TSP_G;
+  const nutr = {};
+  FOOD_NUTRIENTS.forEach(k => { nutr[k] = round(drinkNutrientValue(drink, k) * scale, k==="calories"?0:1); });
+  if (addedSugar > 0){
+    nutr.sugar    = round(nutr.sugar + addedSugar, 1);
+    nutr.carbs    = round(nutr.carbs + addedSugar, 1);
+    nutr.calories = round(nutr.calories + addedSugar * SUGAR_KCAL_PER_G, 0);
+  }
   return {
     id: uid("hyd"), date, source:"hydration", createdAt: Date.now(), updatedAt: Date.now(),
     drinkId: drink.id, name: drink.name, category: drink.category, icon: drink.icon,
     ml: round(ml,0), hydrationPct: drink.hydrationPct,
     caffeineMg: round(num(drink.caffeine) * scale, 1),
-    sugarG: round(num(drink.sugar) * scale, 1),
+    sugarG: nutr.sugar,
+    addedSugarTsp: tsp || 0,
     alcoholPct: num(drink.alcoholPct),
-    alcoholUnits: round(alcoholUnitsFor(ml, drink.alcoholPct), 2)
+    alcoholUnits: round(alcoholUnitsFor(ml, drink.alcoholPct), 2),
+    nutr
   };
+}
+/* One nutrient from a single logged drink. Entries saved before drinks carried
+   full nutrition only know their sugar, so those are estimated from it. */
+function hydrationEntryNutrient(l, key){
+  if (l && l.nutr && l.nutr[key]!=null) return num(l.nutr[key]);
+  if (key==="sugar") return num(l.sugarG);
+  if (key==="calories") return round(num(l.sugarG) * SUGAR_KCAL_PER_G + num(l.alcoholUnits) * KCAL_PER_ALCOHOL_UNIT, 0);
+  return 0;
+}
+/* Everything drunk on a given day, for one nutrient. */
+function drinkNutrient(date, key){
+  let v = 0;
+  STATE.hydrationLogs.forEach(l => { if (l.date===date) v += hydrationEntryNutrient(l, key); });
+  return round(v, key==="calories"?0:1);
 }
 
 /* Daily hydration roll-up (referenced by home + trends). */
@@ -1804,7 +1986,7 @@ SCREENS.hydration = {
             <div class="li-ic">${l.icon||"🥤"}</div>
             <div class="li-main">
               <div class="li-title">${esc(l.name)}</div>
-              <div class="li-sub">${fmt(l.ml,0)} ml · ${l.hydrationPct}%${l.caffeineMg?` · ${fmt(l.caffeineMg,0)}mg`:""}${l.sugarG?` · ${fmt(l.sugarG,1)}g`:""}${l.alcoholUnits?` · ${fmt(l.alcoholUnits,1)}u`:""}</div>
+              <div class="li-sub">${fmt(l.ml,0)} ml · ${l.hydrationPct}%${hydrationEntryNutrient(l,"calories")?` · ${fmt(hydrationEntryNutrient(l,"calories"),0)} kcal`:""}${l.caffeineMg?` · ${fmt(l.caffeineMg,0)}mg`:""}${l.sugarG?` · ${fmt(l.sugarG,1)}g sugar${l.addedSugarTsp?` (${tspLabel(l.addedSugarTsp)} tsp added)`:""}`:""}${l.alcoholUnits?` · ${fmt(l.alcoholUnits,1)}u`:""}</div>
             </div>
             <div class="li-actions">
               <button class="iconbtn" onclick="editHydration('${l.id}')">✎</button>
@@ -1827,14 +2009,23 @@ let DRINK_PICK = null;   // { drink, ml }
 function openDrinkSheet(drinkId){
   const drink = STATE.drinkDatabase.find(x=>x.id===drinkId);
   if (!drink) return;
-  DRINK_PICK = { drink, ml: drink.defaultMl };
+  DRINK_PICK = { drink, ml: drink.defaultMl, sugarTsp: 0 };
   renderDrinkSheet();
 }
 function setServing(ml){ DRINK_PICK.ml = ml; renderDrinkSheet(); }
+function setSugarTsp(t){ DRINK_PICK.sugarTsp = num(t); renderDrinkSheet(); }
+function tspLabel(t){
+  if (!t) return "None";
+  if (t===0.5) return "½";
+  if (t===1.5) return "1½";
+  return String(t);
+}
 function setCustomMl(v){ const n=num(v,0); if(n>0) DRINK_PICK.ml=n; renderDrinkSheet(); }
 function renderDrinkSheet(){
   const { drink, ml } = DRINK_PICK;
-  const preview = makeHydrationEntry(drink, ml, screenDate("hydration"));
+  const tsp = num(DRINK_PICK.sugarTsp);
+  const preview = makeHydrationEntry(drink, ml, screenDate("hydration"), tsp);
+  const n = preview.nutr;
   const effective = ml * drink.hydrationPct / 100;
   const presets = [{nm:"Default",ml:drink.defaultMl}, ...SERVINGS];
   openSheet(`
@@ -1845,31 +2036,54 @@ function renderDrinkSheet(){
     <label class="field" style="margin-top:14px;"><span>Exact amount</span>
       <div class="input-unit"><input class="input" type="number" inputmode="numeric" value="${Math.round(ml)}" onchange="setCustomMl(this.value)"><span class="u">ml</span></div>
     </label>
+
+    ${drinkTakesSugar(drink)?`
+      <div class="label-sm">Sugar in it</div>
+      <div class="serv-grid" style="margin-bottom:14px;">
+        ${SUGAR_TSP_OPTIONS.map(o=>`<button class="${o===tsp?"on":""}" onclick="setSugarTsp(${o})">${tspLabel(o)}<small>${o?fmt(o*SUGAR_PER_TSP_G,0)+" g":"no sugar"}</small></button>`).join("")}
+      </div>`:""}
+
     <div class="card" style="background:var(--card-2);">
       <div class="kv"><span class="k">Effective hydration</span><span class="v" style="color:var(--hydration)">${fmt(effective,0)} ml</span></div>
+      ${n.calories?`<div class="kv"><span class="k">Calories</span><span class="v">${fmt(n.calories,0)} kcal</span></div>`:""}
       ${preview.caffeineMg?`<div class="kv"><span class="k">Caffeine</span><span class="v" style="color:var(--caffeine)">${fmt(preview.caffeineMg,0)} mg</span></div>`:""}
-      ${preview.sugarG?`<div class="kv"><span class="k">Sugar</span><span class="v" style="color:var(--sugar)">${fmt(preview.sugarG,1)} g</span></div>`:""}
+      ${preview.sugarG?`<div class="kv"><span class="k">Sugar</span><span class="v" style="color:var(--sugar)">${fmt(preview.sugarG,1)} g${tsp?` <span class="faint">incl. ${tspLabel(tsp)} tsp</span>`:""}</span></div>`:""}
+      ${(n.protein||n.fat)?`<div class="kv"><span class="k">Protein · Fat</span><span class="v">${fmt(n.protein,1)} g · ${fmt(n.fat,1)} g</span></div>`:""}
       ${preview.alcoholUnits?`<div class="kv"><span class="k">Alcohol</span><span class="v" style="color:var(--alcohol)">${fmt(preview.alcoholUnits,1)} units</span></div>`:""}
+      ${n.calories?`<p class="hint" style="margin-top:8px;">Counts towards your nutrition for the day.</p>`:""}
     </div>
     <button class="btn primary full" onclick="logDrink()">Log drink</button>
   `);
 }
 function logDrink(){
   const { drink, ml } = DRINK_PICK;
-  STATE.hydrationLogs.push(makeHydrationEntry(drink, ml, screenDate("hydration")));
+  STATE.hydrationLogs.push(makeHydrationEntry(drink, ml, screenDate("hydration"), num(DRINK_PICK.sugarTsp)));
   save(); closeSheet(); toast("Drink logged"); navigate("hydration");
 }
 
-let EDIT_HYD = null;
+let EDIT_HYD = null, EDIT_HYD_TSP = 0;
 function editHydration(id){
   const l = STATE.hydrationLogs.find(x=>x.id===id); if(!l) return;
   EDIT_HYD = l;
+  EDIT_HYD_TSP = num(l.addedSugarTsp);
+  renderHydrationEdit();
+}
+function setEditSugarTsp(t){ EDIT_HYD_TSP = num(t); renderHydrationEdit(); }
+function renderHydrationEdit(){
+  const l = EDIT_HYD; if(!l) return;
+  const drink = STATE.drinkDatabase.find(x=>x.id===l.drinkId);
+  const canSugar = drink ? drinkTakesSugar(drink) : /\btea\b|\bcoffee\b/i.test(l.name||"");
   openSheet(`
     <h3>Edit ${esc(l.name)}</h3>
     <label class="field"><span>Amount</span>
       <div class="input-unit"><input class="input" id="eh_ml" type="number" inputmode="numeric" value="${Math.round(l.ml)}"><span class="u">ml</span></div>
     </label>
-    <p class="hint">Hydration ${l.hydrationPct}% · caffeine, sugar and alcohol scale with the amount.</p>
+    ${canSugar?`
+      <div class="label-sm">Sugar in it</div>
+      <div class="serv-grid" style="margin-bottom:14px;">
+        ${SUGAR_TSP_OPTIONS.map(o=>`<button class="${o===EDIT_HYD_TSP?"on":""}" onclick="setEditSugarTsp(${o})">${tspLabel(o)}<small>${o?fmt(o*SUGAR_PER_TSP_G,0)+" g":"no sugar"}</small></button>`).join("")}
+      </div>`:""}
+    <p class="hint">Hydration ${l.hydrationPct}% · calories, sugar, caffeine and alcohol all scale with the amount.</p>
     <button class="btn primary full" onclick="saveHydrationEdit()">Save</button>
     <button class="btn full ghost" onclick="closeSheet()">Cancel</button>
   `);
@@ -1877,12 +2091,21 @@ function editHydration(id){
 function saveHydrationEdit(){
   const l = EDIT_HYD; if(!l) return;
   const newMl = num($("#eh_ml").value, l.ml);
-  const oldMl = l.ml || 1;
-  const factor = newMl / oldMl;
-  l.caffeineMg   = round(num(l.caffeineMg)*factor,1);
-  l.sugarG       = round(num(l.sugarG)*factor,1);
-  l.alcoholUnits = round(alcoholUnitsFor(newMl, l.alcoholPct),2);
-  l.ml = round(newMl,0);
+  const tsp = num(EDIT_HYD_TSP);
+  const drink = STATE.drinkDatabase.find(x=>x.id===l.drinkId);
+  if (drink){
+    // recompute cleanly from the source drink rather than scaling twice
+    const fresh = makeHydrationEntry(drink, newMl, l.date, tsp);
+    ["ml","hydrationPct","caffeineMg","sugarG","addedSugarTsp","alcoholPct","alcoholUnits","nutr"]
+      .forEach(k => { l[k] = fresh[k]; });
+  } else {
+    const factor = newMl / (l.ml || 1);
+    l.caffeineMg   = round(num(l.caffeineMg)*factor,1);
+    l.sugarG       = round(num(l.sugarG)*factor,1);
+    l.alcoholUnits = round(alcoholUnitsFor(newMl, l.alcoholPct),2);
+    if (l.nutr) FOOD_NUTRIENTS.forEach(k => { l.nutr[k] = round(num(l.nutr[k])*factor, k==="calories"?0:1); });
+    l.ml = round(newMl,0);
+  }
   l.updatedAt = Date.now();
   save(); closeSheet(); toast("Updated"); navigate("hydration");
 }
@@ -1912,6 +2135,17 @@ function openCustomDrinkSheet(existingId){
       <label class="field"><span>Alcohol % ABV</span><input class="input" id="cd_alc" type="number" value="${ex?ex.alcoholPct:0}"></label>
       <label class="field"><span>Icon / emoji</span><input class="input" id="cd_ic" value="${ex?esc(ex.icon):"🥤"}" maxlength="3"></label>
     </div>
+    <div class="divider"></div>
+    <div class="label-sm">Nutrition per ${ex?fmt(ex.defaultMl,0):"250"} ml</div>
+    <p class="hint" style="margin:-2px 0 10px;">Optional — leave calories blank and they'll be worked out from the sugar and alcohol above.</p>
+    <div class="grid2">
+      <label class="field"><span>Calories (kcal)</span><input class="input" id="cd_kcal" type="number" inputmode="decimal" value="${ex&&ex.calories!=null?numVal(ex.calories,0):""}" placeholder="auto"></label>
+      <label class="field"><span>Carbs (g)</span><input class="input" id="cd_carb" type="number" inputmode="decimal" value="${ex&&ex.carbs!=null?numVal(ex.carbs,1):""}" placeholder="auto"></label>
+    </div>
+    <div class="grid2">
+      <label class="field"><span>Protein (g)</span><input class="input" id="cd_pro" type="number" inputmode="decimal" value="${ex?numVal(ex.protein,1):""}" placeholder="0"></label>
+      <label class="field"><span>Fat (g)</span><input class="input" id="cd_fat" type="number" inputmode="decimal" value="${ex?numVal(ex.fat,1):""}" placeholder="0"></label>
+    </div>
     <button class="btn primary full" onclick="saveCustomDrink(${ex?`'${ex.id}'`:"null"})">Save drink</button>
   `);
 }
@@ -1929,6 +2163,14 @@ function saveCustomDrink(id){
     icon: $("#cd_ic").value.trim()||"🥤",
     unit: "glass"
   };
+  // blank calories/carbs stay null so they're estimated from sugar and alcohol
+  const kcalRaw = ($("#cd_kcal")&&$("#cd_kcal").value||"").trim();
+  const carbRaw = ($("#cd_carb")&&$("#cd_carb").value||"").trim();
+  data.calories = kcalRaw==="" ? null : num(kcalRaw);
+  data.carbs    = carbRaw==="" ? null : num(carbRaw);
+  data.protein  = num($("#cd_pro")&&$("#cd_pro").value, 0);
+  data.fat      = num($("#cd_fat")&&$("#cd_fat").value, 0);
+  ["satFat","fibre","salt"].forEach(k => { if (data[k]==null) data[k] = 0; });
   if(id){ const dr=STATE.drinkDatabase.find(x=>x.id===id); Object.assign(dr,data); }
   else { STATE.drinkDatabase.push(Object.assign({id:uid("drk")}, data)); HYDR_CAT = data.category; }
   save(); closeSheet(); toast("Drink saved");
@@ -1959,7 +2201,9 @@ function getNutrition(date){ return STATE.nutritionLogs.find(l => l.date === dat
 /* Sugar is a carbohydrate: ~4 kcal per gram. Drinks logged in Hydration carry
    their sugar, so those calories are folded into the day's calorie total. */
 const SUGAR_KCAL_PER_G = 4;
-function drinkSugarKcal(date){ return round(hydrationSummary(date).sugar * SUGAR_KCAL_PER_G, 0); }
+/* Calories from everything drunk that day (milk in a latte, juice, beer —
+   not just the sugar). */
+function drinkSugarKcal(date){ return drinkNutrient(date, "calories"); }
 
 /* ---- targets ----------------------------------------------------------
    The protein target can track body weight (2 g per kg by default), so every
@@ -2022,13 +2266,14 @@ function dayNutrient(date, key){
   const m = getNutrition(date);
   let v = (m && m[key]!=null) ? num(m[key]) : 0;
   STATE.foodLogs.forEach(f => { if (f.date===date) v += num(f[key]); });
-  if (key==="calories") v += drinkSugarKcal(date);
+  v += drinkNutrient(date, key);
   return v;
 }
 function totalCaloriesFor(date){ return dayNutrient(date, "calories"); }
 function foodKcalFor(date){ let v=0; STATE.foodLogs.forEach(f=>{ if(f.date===date) v+=num(f.calories); }); return v; }
 function dayHasNutrition(date){
-  return manualHasNutrients(getNutrition(date)) || STATE.foodLogs.some(f=>f.date===date) || drinkSugarKcal(date)>0;
+  return manualHasNutrients(getNutrition(date)) || STATE.foodLogs.some(f=>f.date===date)
+      || STATE.hydrationLogs.some(l=>l.date===date && hydrationEntryNutrient(l,"calories")>0);
 }
 
 function nutritionDatesInWindow(days){
@@ -2037,7 +2282,7 @@ function nutritionDatesInWindow(days){
   const within = dt => dt>=cutoff && dt<=today;
   STATE.nutritionLogs.forEach(l => { if (within(l.date) && manualHasNutrients(l)) set[l.date]=1; });
   STATE.foodLogs.forEach(f => { if (within(f.date)) set[f.date]=1; });
-  STATE.hydrationLogs.forEach(h => { if (within(h.date) && num(h.sugarG)>0) set[h.date]=1; });
+  STATE.hydrationLogs.forEach(h => { if (within(h.date) && hydrationEntryNutrient(h,"calories")>0) set[h.date]=1; });
   return Object.keys(set);
 }
 function nutritionAverages(days){
@@ -2088,7 +2333,7 @@ SCREENS.nutrition = {
       }
       const bits = [];
       if (n.key==="calories" && foodKcal>0) bits.push(`${fmt(foodKcal,0)} from food`);
-      if (n.key==="calories" && drinkKcal>0) bits.push(`${fmt(drinkKcal,0)} from drink sugar`);
+      if (n.key==="calories" && drinkKcal>0) bits.push(`${fmt(drinkKcal,0)} from drinks`);
       let sub = bits.length ? `<div class="muted" style="font-size:12px;margin-top:3px;">incl. ${bits.join(" · ")}</div>` : "";
       if (n.key==="protein" && proteinIsDerived())
         sub += `<div class="muted" style="font-size:12px;margin-top:3px;">target = ${fmt(STATE.settings.proteinPerKg,1)} g per kg of ${fmt(latestBodyWeightKg(),1)} kg</div>`;
@@ -2121,7 +2366,7 @@ SCREENS.nutrition = {
             <div class="stat-big" style="margin-top:5px;">${hasAny||burned?fmt(netCaloriesFor(d),0):"–"}<span class="m-unit" style="font-size:.8rem;"> kcal</span></div>
           </div>
         </div>
-        <p class="hint" style="margin:9px 0 10px;">Copy the active energy total from your Apple Watch. Net is what you've eaten minus what you've burnt.</p>
+        <p class="hint" style="margin:9px 0 10px;">Copy the active energy total from your Apple Watch. Net is everything you've eaten and drunk, minus what you've burnt.</p>
         <div class="row" style="gap:8px;">
           <input class="input" id="burnKcal" type="number" inputmode="numeric" min="0" step="1"
                  value="${hasBurned(d)?esc(getBurned(d)):""}" placeholder="e.g. 620" style="flex:1;">
