@@ -544,7 +544,7 @@ textarea.input{ min-height:64px; resize:vertical; }
 
 <script>
 /* =====================================================================
-   DAILY — single-file health tracker
+   DAILY — single-file health tracker (index.html + Supabase)
    Storage strategy:
      - Whole app state lives in one in-memory object (STATE).
      - On boot we hydrate it from the best backend available:
@@ -561,14 +561,353 @@ const STORE_KEY = "daily_health_tracker_v1";
 let BACKEND = "memory";           // resolved during boot (local cache layer)
 let MEM = null;                   // in-memory fallback blob
 
-/* ---------- cloud sync (Google Sheets via Apps Script web app) ----------
-   Canonical store when configured; the local backend above is the offline
-   cache. Configure either by hard-coding below, or via Settings → Cloud sync
-   (saved on this device only). */
-const DEFAULT_SYNC_URL   = "https://script.google.com/macros/s/AKfycbzp83668hb7VfAvyoo8YX2JOj1kpGhoC2URleI6MhiPfKLYBgzXCM26J-wjIIJevG5jag/exec";
-const DEFAULT_SYNC_TOKEN = "";    // optional shared secret; must match the Apps Script
-const SYNC_CFG_KEY = "daily_sync_cfg_v1";
-let SYNC = { state:"disabled", lastSync:null, error:null };  // for the UI
+/* ---------- cloud sync (Supabase) ------------------------------------
+   The local backend above is the offline cache; Supabase is the canonical
+   store. Data lives in one table per collection, one row per log, so it is
+   queryable in SQL — not a single opaque blob.
+
+   Sync is three-way: we keep a snapshot of what the server last had, which
+   is what lets us tell "new here" apart from "deleted there".
+
+   Configure in Settings → Cloud sync, or hard-code the two constants. */
+const DEFAULT_SB_URL = "https://qxrkyfthpezugyqwsvlk.supabase.co";
+/* The publishable key is meant to be public — it identifies the project and
+   grants nothing on its own, because every table is behind row-level security.
+   A key labelled "service_role" or "secret" is the opposite: never put one here. */
+const DEFAULT_SB_KEY = "sb_publishable_MkZ2QAecD3tlBwFlDhKYIQ_XBmIE6EK";
+
+const SB_CFG_KEY      = "daily_supabase_cfg_v1";
+const SB_CRED_KEY     = "daily_supabase_cred_v1";
+const SB_SESSION_KEY  = "daily_supabase_session_v1";
+const SB_SNAPSHOT_KEY = "daily_supabase_snapshot_v1";
+
+let SYNC = { state:"disabled", lastSync:null, error:null };   // for the UI
+
+/* Every synced collection: STATE key <-> Postgres table. */
+const SB_TABLES = [
+  { key:"workoutLogs",         table:"workout_logs" },
+  { key:"strengthLogs",        table:"strength_logs" },
+  { key:"hydrationLogs",       table:"hydration_logs" },
+  { key:"nutritionLogs",       table:"nutrition_logs" },
+  { key:"foodLogs",            table:"food_logs" },
+  { key:"meals",               table:"meals" },
+  { key:"bodyCompositionLogs", table:"body_logs" },
+  { key:"brushingLogs",        table:"brushing_logs" },
+  { key:"groomingLogs",        table:"grooming_logs" },
+  { key:"drinkDatabase",       table:"drinks" }
+];
+const SB_SETTINGS_TABLE = "app_settings";
+const SB_CHUNK = 400;               // rows per request
+
+/* ---- configuration ---- */
+function sbCfg(){
+  let c = null;
+  try { const raw = localStorage.getItem(SB_CFG_KEY); if (raw) c = JSON.parse(raw); } catch(e){}
+  return {
+    url: (c && c.url != null) ? c.url : DEFAULT_SB_URL,
+    key: (c && c.key != null) ? c.key : DEFAULT_SB_KEY
+  };
+}
+function setSbCfg(url, key){
+  try { localStorage.setItem(SB_CFG_KEY, JSON.stringify({ url:(url||"").trim().replace(/\/+$/,""), key:(key||"").trim() })); return true; }
+  catch(e){ return false; }
+}
+function sbUrl(){ return (sbCfg().url || "").trim().replace(/\/+$/,""); }
+function sbKey(){ return (sbCfg().key || "").trim(); }
+function sbConfigured(){ return !!(sbUrl() && sbKey()); }
+
+/* ---- staying signed in --------------------------------------------------
+   Supabase sessions are refreshed automatically, but a token can still lapse
+   if the app goes unopened for long enough. Keeping the login on the device
+   means that gets sorted silently instead of showing you a sign-in form.
+   This lives in this device's storage only — never in the published file. */
+function getSbCred(){
+  try { const raw = localStorage.getItem(SB_CRED_KEY); return raw ? JSON.parse(raw) : null; }
+  catch(e){ return null; }
+}
+function setSbCred(email, password){
+  try { localStorage.setItem(SB_CRED_KEY, JSON.stringify({ email, password })); } catch(e){}
+}
+function clearSbCred(){ try { localStorage.removeItem(SB_CRED_KEY); } catch(e){} }
+function staySignedIn(){ return !!getSbCred(); }
+
+/* ---- session ---- */
+let SB_SESSION = null;
+function loadSbSession(){
+  try { const raw = localStorage.getItem(SB_SESSION_KEY); SB_SESSION = raw ? JSON.parse(raw) : null; }
+  catch(e){ SB_SESSION = null; }
+  return SB_SESSION;
+}
+function saveSbSession(s){
+  SB_SESSION = s;
+  try { s ? localStorage.setItem(SB_SESSION_KEY, JSON.stringify(s)) : localStorage.removeItem(SB_SESSION_KEY); } catch(e){}
+}
+function sbSignedIn(){ return !!(SB_SESSION && SB_SESSION.access_token); }
+function sbEmail(){ return SB_SESSION ? SB_SESSION.email : ""; }
+function remoteEnabled(){ return sbConfigured() && sbSignedIn(); }
+
+function sbSessionFrom(data){
+  return {
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    expires_at: Date.now() + (num(data.expires_in, 3600) * 1000),
+    user_id: data.user ? data.user.id : (SB_SESSION ? SB_SESSION.user_id : null),
+    email: data.user ? data.user.email : (SB_SESSION ? SB_SESSION.email : "")
+  };
+}
+
+async function sbAuth(path, body){
+  const res = await fetch(`${sbUrl()}/auth/v1/${path}`, {
+    method: "POST",
+    headers: { "Content-Type":"application/json", "apikey": sbKey() },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok){
+    throw new Error(data.error_description || data.msg || data.message || ("Sign-in failed (HTTP "+res.status+")"));
+  }
+  return data;
+}
+async function sbSignIn(email, password){
+  const data = await sbAuth("token?grant_type=password", { email, password });
+  saveSbSession(sbSessionFrom(data));
+  return SB_SESSION;
+}
+async function sbSignUp(email, password){
+  const data = await sbAuth("signup", { email, password });
+  if (data.access_token) saveSbSession(sbSessionFrom(data));
+  return data;
+}
+async function sbRefreshSession(){
+  if (!SB_SESSION || !SB_SESSION.refresh_token) throw new Error("Not signed in");
+  const data = await sbAuth("token?grant_type=refresh_token", { refresh_token: SB_SESSION.refresh_token });
+  saveSbSession(sbSessionFrom(data));
+  return SB_SESSION;
+}
+/* Sign back in without bothering anyone. Returns true if we're now connected. */
+async function sbAutoSignIn(){
+  if (sbSignedIn()) return true;
+  if (!sbConfigured()) return false;
+  const c = getSbCred();
+  if (!c || !c.email || !c.password) return false;
+  try { await sbSignIn(c.email, c.password); return true; }
+  catch(e){ console.warn("Auto sign-in failed", e); return false; }
+}
+async function sbSignOutRemote(){
+  try {
+    if (SB_SESSION && SB_SESSION.access_token){
+      await fetch(`${sbUrl()}/auth/v1/logout`, {
+        method:"POST",
+        headers:{ "apikey": sbKey(), "Authorization": "Bearer " + SB_SESSION.access_token }
+      });
+    }
+  } catch(e){}
+  saveSbSession(null);
+  clearSbSnapshot();
+  clearSbCred();
+}
+
+/* ---- REST helper: adds auth, refreshes an expired token once ---- */
+async function sbRest(path, opts, isRetry){
+  if (!sbConfigured()) throw new Error("Supabase isn't configured");
+  if (!sbSignedIn())   throw new Error("Not signed in");
+  if (!isRetry && SB_SESSION.expires_at && Date.now() > SB_SESSION.expires_at - 60000){
+    try { await sbRefreshSession(); } catch(e){ /* try the call anyway */ }
+  }
+  const o = opts || {};
+  const headers = Object.assign({
+    "apikey": sbKey(),
+    "Authorization": "Bearer " + SB_SESSION.access_token,
+    "Content-Type": "application/json"
+  }, o.headers || {});
+  const ctl = (typeof AbortController!=="undefined") ? new AbortController() : null;
+  const tm = ctl ? setTimeout(()=>ctl.abort(), 20000) : null;
+  let res;
+  try {
+    res = await fetch(`${sbUrl()}/rest/v1/${path}`, Object.assign({}, o, { headers, signal: ctl?ctl.signal:undefined }));
+  } finally { if (tm) clearTimeout(tm); }
+
+  if (res.status === 401 && !isRetry){
+    let recovered = false;
+    try { await sbRefreshSession(); recovered = true; }
+    catch(e){ recovered = await sbAutoSignIn(); }      // refresh token expired: log back in
+    if (!recovered) throw new Error("Session expired — sign in again in Settings");
+    return sbRest(path, opts, true);
+  }
+  if (!res.ok){
+    let msg = "HTTP " + res.status;
+    try { const e = await res.json(); msg = e.message || e.hint || msg; } catch(err){}
+    if (res.status === 404) msg += " — is the table missing? Run the setup SQL.";
+    throw new Error(msg);
+  }
+  if (res.status === 204) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+/* ---- snapshot: what the server had at our last successful sync ---- */
+function sbSnapshot(){
+  try { const raw = localStorage.getItem(SB_SNAPSHOT_KEY); return raw ? JSON.parse(raw) : null; }
+  catch(e){ return null; }
+}
+function setSbSnapshot(snap){
+  try { localStorage.setItem(SB_SNAPSHOT_KEY, JSON.stringify(snap)); } catch(e){}
+}
+function clearSbSnapshot(){ try { localStorage.removeItem(SB_SNAPSHOT_KEY); } catch(e){} }
+function snapshotFromState(state){
+  const snap = {};
+  SB_TABLES.forEach(t => {
+    const ids = {};
+    (state[t.key]||[]).forEach(r => { if (r && r.id) ids[r.id] = recordStamp(r); });
+    snap[t.key] = ids;
+  });
+  return snap;
+}
+/* A record's own modification time, best effort. */
+function recordStamp(rec){ return num(rec.updatedAt) || num(rec.createdAt) || 0; }
+
+/* ---- row <-> record ---- */
+function sbUserId(){ return SB_SESSION ? SB_SESSION.user_id : null; }
+function sbRowFor(rec){
+  return {
+    id: String(rec.id),
+    user_id: sbUserId(),          // half the primary key — always sent, never inferred
+    entry_date: rec.date || null,
+    updated_at: new Date(recordStamp(rec) || Date.now()).toISOString(),
+    deleted: false,
+    data: rec
+  };
+}
+function sbTombstone(id){
+  return { id: String(id), user_id: sbUserId(), entry_date: null,
+           updated_at: new Date().toISOString(), deleted: true, data: {} };
+}
+
+/* Every record needs a stable id to sync by; older saves may not have one. */
+function ensureIds(state){
+  SB_TABLES.forEach(t => {
+    (state[t.key]||[]).forEach(r => {
+      if (r && !r.id) r.id = uid(t.key.slice(0,4));
+    });
+  });
+  return state;
+}
+
+/* ---- pull ---- */
+async function remoteLoad(){
+  const out = { collections:{}, settings:null, settingsUpdatedAt:0, empty:true };
+  for (let i=0; i<SB_TABLES.length; i++){
+    const t = SB_TABLES[i];
+    const rows = await sbRest(`${t.table}?select=id,updated_at,deleted,data&deleted=eq.false`, { method:"GET" });
+    const recs = (rows||[]).map(r => {
+      const rec = r.data || {};
+      if (!rec.id) rec.id = r.id;
+      return rec;
+    });
+    out.collections[t.key] = recs;
+    if (recs.length) out.empty = false;
+  }
+  const srows = await sbRest(`${SB_SETTINGS_TABLE}?select=id,updated_at,data&limit=1`, { method:"GET" });
+  if (srows && srows.length){
+    out.settings = srows[0].data || null;
+    out.settingsUpdatedAt = Date.parse(srows[0].updated_at) || 0;
+  }
+  return out;
+}
+
+/* ---- push: only what changed since the snapshot ---- */
+async function remoteSave(state){
+  if (!remoteEnabled()) throw new Error("Not connected");
+  const snap = sbSnapshot() || {};
+  for (let i=0; i<SB_TABLES.length; i++){
+    const t = SB_TABLES[i];
+    const local = state[t.key] || [];
+    const was = snap[t.key] || {};
+    const seen = {};
+    const changed = [];
+    local.forEach(rec => {
+      if (!rec || !rec.id) return;
+      seen[rec.id] = 1;
+      const before = was[rec.id];
+      if (before === undefined || before !== recordStamp(rec)) changed.push(sbRowFor(rec));
+    });
+    const gone = Object.keys(was).filter(id => !seen[id]).map(sbTombstone);
+    const rows = changed.concat(gone);
+    for (let j=0; j<rows.length; j+=SB_CHUNK){
+      await sbRest(t.table, {
+        method:"POST",
+        headers:{ "Prefer":"resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(rows.slice(j, j+SB_CHUNK))
+      });
+    }
+  }
+  await sbRest(SB_SETTINGS_TABLE, {
+    method:"POST",
+    headers:{ "Prefer":"resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([{ id: sbUserId(), user_id: sbUserId(),
+                            updated_at:new Date().toISOString(), data: state.settings }])
+  });
+  setSbSnapshot(snapshotFromState(state));
+  return true;
+}
+
+/* ---- three-way merge -------------------------------------------------
+   For each row we know three things: is it here, is it there, and was it
+   there last time. That's enough to tell a new row from a deleted one
+   without ever resurrecting something you removed on another device. */
+function reconcileState(local, remote){
+  const snap = sbSnapshot();
+  const merged = local;
+  SB_TABLES.forEach(t => {
+    const localRows  = local[t.key] || [];
+    const remoteRows = remote.collections[t.key] || [];
+    const was = snap ? (snap[t.key] || {}) : null;
+    const byId = {};
+    remoteRows.forEach(r => { if (r && r.id) byId[r.id] = r; });
+    const out = [];
+
+    localRows.forEach(l => {
+      if (!l || !l.id) { out.push(l); return; }
+      const r = byId[l.id];
+      if (r){
+        out.push(recordStamp(r) > recordStamp(l) ? r : l);   // newer edit wins
+        delete byId[l.id];
+      } else if (was && was[l.id] !== undefined){
+        /* it was on the server and now isn't: deleted elsewhere */
+      } else {
+        out.push(l);                                          // new here, not pushed yet
+      }
+    });
+    Object.keys(byId).forEach(id => {
+      const r = byId[id];
+      if (was && was[id] !== undefined && !localRows.some(l=>l && l.id===id)){
+        /* deleted on this device since the last sync — leave it out */
+      } else {
+        out.push(r);                                          // new on the server
+      }
+    });
+    merged[t.key] = out;
+  });
+
+  if (remote.settings && remote.settingsUpdatedAt >= num(local.updatedAt)){
+    merged.settings = Object.assign({}, merged.settings, remote.settings);
+  }
+  return merged;
+}
+
+/* A state with no logged data at all (used to avoid a first-sync wipe). */
+function isEmptyState(s){
+  if (!s) return true;
+  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs"];
+  return arrs.every(k => !Array.isArray(s[k]) || s[k].length === 0);
+}
+
+function setSyncState(state, error){
+  SYNC.state = state;
+  if (error !== undefined) SYNC.error = error;
+  if (state === "ok") { SYNC.lastSync = Date.now(); SYNC.error = null; }
+  try { if (typeof CURRENT!=="undefined" && CURRENT==="settings" && typeof renderSyncCard==="function") renderSyncCard(); } catch(e){}
+}
 
 async function backendGet(){
   if (BACKEND === "window") {
@@ -602,69 +941,6 @@ async function resolveBackend(){
     BACKEND = "local"; return;
   } catch(e){ /* fall through */ }
   BACKEND = "memory";
-}
-
-/* ---------- cloud sync helpers ---------- */
-function getSyncCfg(){
-  let cfg = null;
-  try { const raw = localStorage.getItem(SYNC_CFG_KEY); if (raw) cfg = JSON.parse(raw); } catch(e){}
-  return {
-    url:   (cfg && cfg.url   != null) ? cfg.url   : DEFAULT_SYNC_URL,
-    token: (cfg && cfg.token != null) ? cfg.token : DEFAULT_SYNC_TOKEN
-  };
-}
-function setSyncCfg(url, token){
-  try { localStorage.setItem(SYNC_CFG_KEY, JSON.stringify({ url:url||"", token:token||"" })); return true; }
-  catch(e){ return false; }
-}
-function syncUrl(){ return (getSyncCfg().url || "").trim(); }
-function syncToken(){ return (getSyncCfg().token || "").trim(); }
-function remoteEnabled(){ return !!syncUrl(); }
-
-/* GET the whole-state blob from the sheet. Throws on network/parse/error. */
-async function remoteLoad(){
-  const url = syncUrl(); if (!url) throw new Error("No sync URL");
-  const sep = url.includes("?") ? "&" : "?";
-  const full = url + sep + "token=" + encodeURIComponent(syncToken()) + "&t=" + Date.now();
-  const ctl = (typeof AbortController!=="undefined") ? new AbortController() : null;
-  const tm = ctl ? setTimeout(()=>ctl.abort(), 9000) : null;
-  let res;
-  try { res = await fetch(full, ctl ? { signal: ctl.signal } : {}); }
-  finally { if (tm) clearTimeout(tm); }
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  const text = await res.text();
-  const data = text && text.trim() ? JSON.parse(text) : {};
-  if (data && data.error) throw new Error(String(data.error));
-  return data;
-}
-/* POST the whole-state blob to the sheet (last-write-wins). */
-async function remoteSave(stateObj){
-  const url = syncUrl(); if (!url) throw new Error("No sync URL");
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },  // simple request: no CORS preflight
-    body: JSON.stringify({ token: syncToken(), state: stateObj })
-  });
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  let out = {};
-  try { out = JSON.parse(await res.text()); } catch(e){}
-  if (out && out.ok === false) throw new Error(out.error || "Save rejected");
-  return out;
-}
-
-/* A state with no logged data at all (used to avoid a first-sync wipe). */
-function isEmptyState(s){
-  if (!s) return true;
-  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs"];
-  return arrs.every(k => !Array.isArray(s[k]) || s[k].length === 0);
-}
-
-function setSyncState(state, error){
-  SYNC.state = state;
-  if (error !== undefined) SYNC.error = error;
-  if (state === "ok") { SYNC.lastSync = Date.now(); SYNC.error = null; }
-  // refresh the sync card if the settings screen is open
-  try { if (typeof CURRENT!=="undefined" && CURRENT==="settings" && typeof renderSyncCard==="function") renderSyncCard(); } catch(e){}
 }
 
 /* ---------- defaults ---------- */
@@ -921,7 +1197,7 @@ function persist(){
       setSyncState("saving");
       try { await remoteSave(STATE); setSyncState("ok"); }
       catch(e){ setSyncState("error", e.message || String(e)); console.warn("Remote save failed", e); }
-    }, 700);
+    }, 900);
   }
 }
 function save(){ STATE.updatedAt = Date.now(); persist(); }
@@ -934,27 +1210,37 @@ async function loadLocal(){
 
 async function loadState(){
   await resolveBackend();
+  loadSbSession();
   // 1) hydrate from the local cache first (instant, works offline)
   const local = await loadLocal();
   STATE = local ? mergeDefaults(local) : defaultState();
+  ensureIds(STATE);
 
-  // 2) reconcile with the cloud if configured
-  if (!remoteEnabled()){ SYNC.state = "disabled"; return; }
+  // 2) reconcile with Supabase if we're connected
+  if (!remoteEnabled()) await sbAutoSignIn();        // silent: never blocks the app
+  if (!remoteEnabled()){ SYNC.state = sbConfigured() ? "signedout" : "disabled"; return; }
+  await syncNow(true);
+}
+
+/* Pull, merge, push. Used on boot and by the buttons in Settings. */
+async function syncNow(quiet){
+  if (!remoteEnabled()) throw new Error("Not connected");
   setSyncState("loading");
   try {
-    const remoteRaw = await remoteLoad();
-    const remote = (remoteRaw && Object.keys(remoteRaw).length) ? mergeDefaults(remoteRaw) : null;
-    const rEmpty = isEmptyState(remote), lEmpty = isEmptyState(STATE);
-    if (remote && !rEmpty && (lEmpty || (remote.updatedAt||0) >= (STATE.updatedAt||0))){
-      STATE = remote;            // cloud is newer/authoritative
-      await saveLocal();         // refresh the local cache
-    } else if (!lEmpty){
-      await remoteSave(STATE);    // local is newer or seeding a fresh sheet -> push up
-    }
+    const remote = await remoteLoad();
+    STATE = mergeDefaults(reconcileState(STATE, remote));
+    ensureIds(STATE);
+    await saveLocal();
+    setSyncState("saving");
+    await remoteSave(STATE);
     setSyncState("ok");
+    if (!quiet){ applySettings(); toast("Synced"); }
+    return true;
   } catch(e){
-    setSyncState("error", e.message || String(e));   // stay on the local copy
-    console.warn("Cloud load failed; working offline", e);
+    setSyncState("error", e.message || String(e));
+    if (!quiet) toast("Sync failed");
+    console.warn("Sync failed; working offline", e);
+    return false;
   }
 }
 /* Make sure newly added fields exist even on old saves. */
@@ -969,6 +1255,7 @@ function mergeDefaults(s){
   if (!s.drinkDatabase.length) s.drinkDatabase = d.drinkDatabase;
   upgradeDrinkDatabase(s, d);
   s.version = 1;
+  if (typeof ensureIds === "function") ensureIds(s);
   return s;
 }
 /* Drinks saved before they carried nutrition get it filled in from the stock
@@ -1567,10 +1854,14 @@ SCREENS.workouts = {
     const today = plan[0];
     return `
       ${todayWorkoutCard(today)}
+      ${pastDaysCard()}
       ${runTargetsCard()}
       ${scheduleCard(plan)}
       ${recentWorkoutsCard()}
-      <button class="btn primary full" style="margin-bottom:14px" onclick="chooseWorkout('${todayISO()}', true)">＋ Log an unscheduled workout</button>
+      <div class="btn-row" style="margin-bottom:14px">
+        <button class="btn primary" onclick="chooseWorkout('${todayISO()}', true)">＋ Log today</button>
+        <button class="btn" onclick="openBackdateSheet()">🗓️ Another day</button>
+      </div>
     `;
   }
 };
@@ -1655,6 +1946,51 @@ function scheduleCard(plan){
   </div>`;
 }
 
+/* The last seven days at a glance, so anything missed can be filled in.
+   Days the end-of-day backfill marked "Missed" show up here to be corrected. */
+function pastDaysCard(){
+  const days = [];
+  for (let i=1; i<=7; i++) days.push(addDays(todayISO(), -i));
+  return `<div class="card flush">
+    <div style="padding:14px 16px 6px"><h3 style="margin:0">Fill in a past day</h3></div>
+    ${days.map(d=>{
+      const log = workoutForDate(d);
+      const status = !log ? "Nothing logged"
+        : log.status==="Missed" ? "Missed"
+        : log.status==="Rest Day" ? "Rest day"
+        : categoryLabel(log.actual) || "Logged";
+      const cls = !log ? "neutral" : log.status==="Missed" ? "bad" : log.status==="Rest Day" ? "neutral" : "good";
+      const ic  = !log ? "➕" : log.status==="Missed" ? "✕" : log.status==="Rest Day" ? "😴"
+                : isRunNorm(norm(log.actual)) ? "🏃" : "🏋️";
+      return `<div class="list-item" style="cursor:pointer;" onclick="chooseWorkout('${d}', true)">
+        <div class="li-ic">${ic}</div>
+        <div class="li-main"><div class="li-title">${prettyDate(d)}</div>
+          <div class="li-sub">${esc(status)}${log&&log.status==="Missed"?" — tap to correct":""}</div></div>
+        <div class="li-actions"><span class="pill ${cls}">${!log?"Add":"Change"}</span></div>
+      </div>`;
+    }).join("")}
+    <div style="padding:10px 16px 16px">
+      <button class="btn sm ghost" onclick="openBackdateSheet()">Pick another date…</button>
+    </div>
+  </div>`;
+}
+function openBackdateSheet(){
+  openSheet(`
+    <h3>Log a workout for another day</h3>
+    <p class="hint" style="margin-bottom:12px;">Pick the day you actually trained — the plan reshuffles around it.</p>
+    <label class="field"><span>Date</span>
+      <input class="input" id="bdDate" type="date" value="${addDays(todayISO(),-1)}" max="${todayISO()}"></label>
+    <button class="btn primary full" onclick="backdateContinue()">Choose workout</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+  `);
+}
+function backdateContinue(){
+  const el = $("#bdDate");
+  const d = (el && el.value) || addDays(todayISO(),-1);
+  if (d > todayISO()){ toast("That's in the future"); return; }
+  chooseWorkout(d, true);
+}
+
 function recentWorkoutsCard(){
   const done = STATE.workoutLogs.filter(l=>l.status==="Completed"||l.status==="Unscheduled").sort(byDateDesc).slice(0,8);
   return `<div class="card flush">
@@ -1690,6 +2026,7 @@ function chooseWorkout(d, unscheduled){
     ["Rest Day","😴"],["Missed Workout","✕"]
   ];
   openSheet(`<h3>${unscheduled?"Log a workout":"Choose workout"}</h3>
+    ${d!==todayISO()?`<p class="hint" style="margin:-4px 0 12px;">For ${esc(prettyDate(d))}.</p>`:""}
     <div class="grid2">${opts.map(([t,ic])=>`
       <button class="btn" style="justify-content:flex-start" onclick="pickWorkout('${d}','${t}',${unscheduled})">${ic} ${t}</button>`).join("")}
     </div>`);
@@ -3102,7 +3439,14 @@ function importJson(input){
         if (parsed.settings) base.settings=Object.assign(base.settings, parsed.settings);
         STATE = mergeDefaults(base);
       }
-      save(); applySettings(); toast("Data imported"); navigate("data");
+      ensureIds(STATE);
+      if (typeof clearSbSnapshot === "function") clearSbSnapshot();   // force a full upload
+      save(); applySettings();
+      if (remoteEnabled()){
+        toast("Imported — uploading…");
+        pushEverything();
+      } else toast("Data imported");
+      navigate("data");
     } catch(e){
       console.error(e); toast("Import failed — invalid file");
     }
@@ -3126,21 +3470,40 @@ SCREENS.settings = {
   title: "Settings",
   render(){
     const s = STATE.settings;
-    const cfg = getSyncCfg();
+    const cfg = sbCfg();
     return `
       <div class="card" id="syncCard">
-        <h3>Cloud sync (Google Sheets)</h3>
-        <p class="hint" style="margin:2px 0 12px;">Sync across devices via a Google Apps Script web app. Leave the URL blank to keep everything on this device only.</p>
-        <label class="field"><span>Web app URL</span>
-          <input class="input" id="sync_url" type="url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(cfg.url||"")}"></label>
-        <label class="field"><span>Secret token (optional)</span>
-          <input class="input" id="sync_token" type="text" placeholder="must match the script" value="${esc(cfg.token||"")}"></label>
-        <div class="row wrap" style="gap:8px;margin-top:6px;">
-          <button class="btn sm primary" onclick="saveSyncCfg()">Save &amp; connect</button>
-          <button class="btn sm ghost" onclick="syncLoadNow()">Load from cloud</button>
-          <button class="btn sm ghost" onclick="syncPushNow()">Save to cloud now</button>
-        </div>
-        <div id="syncStatus" style="margin-top:10px;">${syncStatusLine()}</div>
+        <h3>Cloud sync (Supabase)</h3>
+        ${sbSignedIn()
+          ? `<p class="hint" style="margin:2px 0 12px;">Signed in as <b>${esc(sbEmail())}</b>. Everything you log syncs to your own Supabase database.</p>
+             <div class="tt-row"><span class="tt-lab">Stay signed in on this device</span>
+               <button class="toggle ${staySignedIn()?"on":""}" onclick="toggleStaySignedIn()"><span class="knob"></span></button></div>
+             <p class="hint" style="margin:8px 0 12px;">${staySignedIn()
+               ? "You won't be asked to sign in again on this device — if the session ever lapses it reconnects on its own."
+               : "Off: if the session lapses you'll need to sign in again here. Sync pauses until you do."}</p>
+             <div class="row wrap" style="gap:8px;">
+               <button class="btn sm primary" onclick="syncNow(false)">Sync now</button>
+               <button class="btn sm ghost" onclick="pushEverything()">Re-upload everything</button>
+               <button class="btn sm ghost" onclick="sbSignOutUi()">Sign out</button>
+             </div>
+             <div id="syncStatus" style="margin-top:10px;">${syncStatusLine()}</div>`
+          : `<p class="hint" style="margin:2px 0 12px;">Sign in once and this device stays in sync. Until then everything is saved here only.</p>
+             ${(sbConfigured() && !SHOW_PROJECT_FIELDS)
+               ? `<div class="kv"><span class="k">Project</span><span class="v" style="font-size:.82rem;">${esc(sbUrl().replace(/^https?:\/\//,""))}</span></div>
+                  <p class="hint" style="margin:6px 0 12px;">Already set up. <a href="#" onclick="showProjectFields();return false;" style="color:var(--accent);">Use a different project</a></p>`
+               : `<label class="field"><span>Project URL</span>
+                    <input class="input" id="sb_url" type="url" placeholder="https://yourproject.supabase.co" value="${esc(cfg.url||"")}"></label>
+                  <label class="field"><span>Publishable (anon) key</span>
+                    <input class="input" id="sb_key" type="text" placeholder="sb_publishable_… or eyJhbGciOi…" value="${esc(cfg.key||"")}"></label>`}
+             <div class="grid2">
+               <label class="field"><span>Email</span><input class="input" id="sb_email" type="email" autocomplete="username"></label>
+               <label class="field"><span>Password</span><input class="input" id="sb_pw" type="password" autocomplete="current-password"></label>
+             </div>
+             <div class="row wrap" style="gap:8px;">
+               <button class="btn sm primary" onclick="sbSignInUi()">Sign in &amp; sync</button>
+               <button class="btn sm ghost" onclick="sbSignUpUi()">Create account</button>
+             </div>
+             <div id="syncStatus" style="margin-top:10px;">${syncStatusLine()}</div>`}
       </div>
 
       <div class="card">
@@ -3279,40 +3642,101 @@ function syncStatusLine(){
     case "loading":  dot="var(--accent)"; txt = "Connecting…"; break;
     case "saving":   dot="var(--accent)"; txt = "Saving…"; break;
     case "error":    dot="var(--bad)"; txt = "Offline — using this device’s copy" + (SYNC.error?` (${esc(SYNC.error)})`:""); break;
-    default:         dot="var(--text-faint)"; txt = "Not connected"; break;
+    case "signedout":dot="var(--warn)"; txt = "Not signed in — this device only"; break;
+    default:         dot="var(--text-faint)"; txt = "Not connected — this device only"; break;
   }
   return `<span class="pill" style="background:transparent;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${dot};margin-right:7px;vertical-align:middle;"></span>${txt}</span>`;
 }
 function renderSyncCard(){ const el=$("#syncStatus"); if (el) el.innerHTML = syncStatusLine(); }
 
-function saveSyncCfg(){
-  const url = $("#sync_url").value.trim();
-  const token = $("#sync_token").value.trim();
-  setSyncCfg(url, token);
-  if (!url){ SYNC.state="disabled"; SYNC.error=null; toast("Cloud sync turned off"); navigate("settings"); return; }
-  toast("Saved — connecting…");
-  syncLoadNow();
+let SHOW_PROJECT_FIELDS = false;
+function showProjectFields(){ SHOW_PROJECT_FIELDS = true; navigate("settings"); }
+function readSbForm(){
+  const url = ($("#sb_url")&&$("#sb_url").value||"").trim() || sbUrl();
+  const key = ($("#sb_key")&&$("#sb_key").value||"").trim() || sbKey();
+  const email = ($("#sb_email")&&$("#sb_email").value||"").trim();
+  const pw = ($("#sb_pw")&&$("#sb_pw").value||"");
+  return { url, key, email, pw };
 }
-async function syncLoadNow(){
-  if (!remoteEnabled()){ toast("Add a web app URL first"); return; }
+async function sbSignInUi(){
+  const f = readSbForm();
+  if (!f.url || !f.key){ toast("Add your project URL and key"); return; }
+  if (!f.email || !f.pw){ toast("Enter your email and password"); return; }
+  setSbCfg(f.url, f.key);
   setSyncState("loading");
   try {
-    const remoteRaw = await remoteLoad();
-    const remote = (remoteRaw && Object.keys(remoteRaw).length) ? mergeDefaults(remoteRaw) : null;
-    if (remote && !isEmptyState(remote)){
-      STATE = remote; await saveLocal(); setSyncState("ok");
-      applySettings(); toast("Loaded from cloud"); navigate("settings");
-    } else {
-      if (!isEmptyState(STATE)) await remoteSave(STATE);   // seed an empty sheet
-      setSyncState("ok"); toast("Connected"); navigate("settings");
-    }
-  } catch(e){ setSyncState("error", e.message||String(e)); toast("Couldn’t reach the sheet"); }
+    await sbSignIn(f.email, f.pw);
+    setSbCred(f.email, f.pw);        // stay signed in on this device
+    clearSbSnapshot();               // fresh device: nothing known to be on the server yet
+    toast("Signed in — syncing…");
+    await syncNow(true);
+    applySettings(); navigate("settings");
+  } catch(e){
+    setSyncState("error", e.message||String(e));
+    toast("Sign-in failed"); navigate("settings");
+  }
 }
-async function syncPushNow(){
-  if (!remoteEnabled()){ toast("Add a web app URL first"); return; }
+async function sbSignUpUi(){
+  const f = readSbForm();
+  if (!f.url || !f.key){ toast("Add your project URL and key"); return; }
+  if (!f.email || !f.pw){ toast("Enter an email and password"); return; }
+  setSbCfg(f.url, f.key);
+  try {
+    const out = await sbSignUp(f.email, f.pw);
+    if (sbSignedIn()){
+      setSbCred(f.email, f.pw);
+      clearSbSnapshot();
+      toast("Account created — syncing…");
+      await syncNow(true);
+    } else {
+      toast("Account created — check your email, then sign in");
+    }
+    navigate("settings");
+  } catch(e){ toast(e.message||"Couldn't create the account"); navigate("settings"); }
+}
+function toggleStaySignedIn(){
+  if (staySignedIn()){
+    clearSbCred();
+    toast("Won't stay signed in on this device");
+  } else {
+    const c = { email: sbEmail(), password: null };
+    // we only have the password at sign-in time, so ask for it again
+    openSheet(`
+      <h3>Stay signed in</h3>
+      <p class="hint" style="margin-bottom:12px;">Confirm your password and this device will reconnect on its own,
+        so you're never shown a sign-in form again. It's stored on this device only — never in the published page.</p>
+      <label class="field"><span>Password for ${esc(c.email)}</span>
+        <input class="input" id="sb_pw2" type="password" autocomplete="current-password"></label>
+      <button class="btn primary full" onclick="confirmStaySignedIn()">Save</button>
+      <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+    `);
+    return;
+  }
+  navigate("settings");
+}
+async function confirmStaySignedIn(){
+  const el = $("#sb_pw2");
+  const pw = el ? el.value : "";
+  if (!pw){ toast("Enter your password"); return; }
+  try {
+    await sbSignIn(sbEmail(), pw);        // prove it's right before storing it
+    setSbCred(sbEmail(), pw);
+    closeSheet(); toast("You'll stay signed in here"); navigate("settings");
+  } catch(e){ toast("That password didn't work"); }
+}
+async function sbSignOutUi(){
+  if (!confirm("Sign out? Your data stays on this device and in Supabase.")) return;
+  await sbSignOutRemote();
+  SYNC.state = "signedout"; SYNC.error = null;
+  toast("Signed out"); navigate("settings");
+}
+/* Forget what we think the server has, so the next push sends every row. */
+async function pushEverything(){
+  if (!remoteEnabled()){ toast("Sign in first"); return; }
+  clearSbSnapshot();
   setSyncState("saving");
-  try { await remoteSave(STATE); setSyncState("ok"); toast("Saved to cloud"); }
-  catch(e){ setSyncState("error", e.message||String(e)); toast("Save failed"); }
+  try { await remoteSave(STATE); setSyncState("ok"); toast("Everything uploaded"); }
+  catch(e){ setSyncState("error", e.message||String(e)); toast("Upload failed"); }
 }
 
 /* =====================================================================
@@ -3821,6 +4245,7 @@ function mealAddFood(){ ADD_TARGET={kind:"meal", id:EDIT_MEAL}; openFoodItemShee
 function logMeal(mealId, grams){
   const m = STATE.meals.find(x=>x.id===mealId); if(!m) return;
   const w = mealCookedWeight(m);
+  if (!w && grams==null && (m.items||[]).length){ openMealWeighSheet(mealId); return; }
   if (w && grams==null){ openMealPortionSheet(mealId); return; }
 
   const d = screenDate("nutrition");
@@ -3832,6 +4257,34 @@ function logMeal(mealId, grams){
   toast(useGrams!=null ? `Logged ${fmt(useGrams,0)} g of ${m.name||"meal"}` : "Meal logged");
   navigate("nutrition");
 }
+/* No prepared weight on file: offer to add one now (which unlocks portions)
+   or just log the lot, rather than silently logging everything. */
+function openMealWeighSheet(mealId){
+  const m = STATE.meals.find(x=>x.id===mealId); if(!m) return;
+  CURRENT_PORTION_MEAL = m;
+  const t = mealTotals(m), raw = mealItemsWeight(m);
+  openSheet(`
+    <h3>${esc(m.name||"Meal")}</h3>
+    <p class="hint" style="margin:-4px 0 12px;">This meal has no prepared weight yet, so I can't work out a portion.
+      Weigh the finished dish and pop the total in — then you can log exactly what's on your plate.</p>
+    <label class="field"><span>Weight once cooked (g)</span>
+      <input class="input" id="mwWeight" type="number" inputmode="decimal" value="${raw?numVal(raw,0):""}" placeholder="e.g. 1200"></label>
+    ${raw?`<p class="hint" style="margin:-4px 0 12px;">Ingredients weighed ${fmt(raw,0)} g going in.</p>`:""}
+    <button class="btn primary full" onclick="saveWeightThenPortion('${m.id}')">Save and choose a portion</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="logMeal('${m.id}', 0)">Just log the whole meal (${fmt(t.calories,0)} kcal)</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+  `);
+}
+function saveWeightThenPortion(mealId){
+  const m = STATE.meals.find(x=>x.id===mealId); if(!m) return;
+  const el = $("#mwWeight");
+  const v = el ? num(el.value) : 0;
+  if (!(v > 0)){ toast("Enter the prepared weight"); return; }
+  m.cookedWeightG = round(v,0); m.updatedAt = Date.now();
+  save();
+  openMealPortionSheet(mealId);
+}
+
 let CURRENT_PORTION_MEAL = null;   // meal whose portion sheet is open
 function openMealPortionSheet(mealId){
   const m = STATE.meals.find(x=>x.id===mealId); if(!m) return;
@@ -3842,13 +4295,19 @@ function openMealPortionSheet(mealId){
     <h3>How much did you have?</h3>
     <p class="hint" style="margin:-4px 0 12px;">${esc(m.name||"Meal")} came to ${fmt(w,0)} g prepared and
       ${fmt(t.calories,0)} kcal in total — that's ${fmt(mealPer100(m).calories,0)} kcal per 100 g.</p>
-    <label class="field"><span>Weight on your plate (g)</span>
-      <input class="input" id="mpAmt" type="number" inputmode="decimal" value="${numVal(half,0)}" oninput="recalcPortion()"></label>
-    <div class="row wrap" style="gap:6px;margin:-4px 0 12px;">
-      <button class="btn sm ghost" onclick="setPortion(${quarter})">Quarter</button>
-      <button class="btn sm ghost" onclick="setPortion(${third})">Third</button>
-      <button class="btn sm ghost" onclick="setPortion(${half})">Half</button>
-      <button class="btn sm ghost" onclick="setPortion(${round(w,0)})">All of it</button>
+    <label class="field"><span>Weigh your plate — exact grams</span>
+      <div class="input-unit">
+        <input class="input" id="mpAmt" type="number" inputmode="decimal" value="${numVal(half,0)}" oninput="recalcPortion()">
+        <span class="u">g</span>
+      </div></label>
+    <div class="label-sm">or take a share</div>
+    <div class="serv-grid" style="margin-bottom:12px;">
+      <button onclick="setPortion(${quarter})">Quarter<small>${fmt(quarter,0)} g</small></button>
+      <button onclick="setPortion(${third})">Third<small>${fmt(third,0)} g</small></button>
+      <button onclick="setPortion(${half})">Half<small>${fmt(half,0)} g</small></button>
+      <button onclick="setPortion(${round(w*2/3,0)})">Two thirds<small>${fmt(round(w*2/3,0),0)} g</small></button>
+      <button onclick="setPortion(${round(w*3/4,0)})">Three quarters<small>${fmt(round(w*3/4,0),0)} g</small></button>
+      <button onclick="setPortion(${round(w,0)})">All of it<small>${fmt(w,0)} g</small></button>
     </div>
     <div class="card" id="mpPreview" style="margin-bottom:12px;">${mealPortionPreview(m, half)}</div>
     <button class="btn primary full" onclick="confirmMealPortion('${m.id}')">Add to ${esc(prettyDate(screenDate("nutrition")))}</button>
