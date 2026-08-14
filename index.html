@@ -3023,6 +3023,21 @@ function weekBuckets(dates){
 function shortDate(iso){ const [y,m,d]=iso.split("-"); return `${+d}/${+m}`; }
 
 /* ---- core SVG chart renderer ---- */
+/* Trailing average over a window of days. Days you didn't log are skipped
+   rather than counted as zero, so a missed day doesn't drag the line down.
+   Needs at least two readings in the window — one point isn't a trend. */
+function movingAverage(values, window, minPoints){
+  const w = window || 7, need = minPoints || 2;
+  return values.map((_, i) => {
+    let sum = 0, count = 0;
+    for (let j = Math.max(0, i - w + 1); j <= i; j++){
+      const v = values[j];
+      if (v != null && isFinite(v)){ sum += v; count++; }
+    }
+    return count >= need ? sum / count : null;
+  });
+}
+
 function buildChart(title, sub, dates, series, opts={}){
   const W=600, H=250, padL=46, padR=14, padT=12, padB=34;
   const plotW=W-padL-padR, plotH=H-padT-padB;
@@ -3073,21 +3088,53 @@ function buildChart(title, sub, dates, series, opts={}){
         const y = yFor(v), h = yFor(minV)-y;
         body += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" rx="2" fill="${s.color}"/>`;
       });
-    } else {
-      // line, breaking on null
-      let dpath="", started=false, pts="";
+    } else if (s.type==="plain"){
+      // an unbroken line, for series where joining the dots is the point
+      let dpath="", started=false;
       s.values.forEach((v,i)=>{
         if (v==null||!isFinite(v)){ started=false; return; }
         const x=xFor(i), y=yFor(v);
         dpath += (started?` L`:` M`)+` ${x.toFixed(1)} ${y.toFixed(1)}`;
         started=true;
-        if (n<=45) pts += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.6" fill="${s.color}"/>`;
       });
-      body += `<path d="${dpath.trim()}" fill="none" stroke="${s.color}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>${pts}`;
+      body += `<path d="${dpath.trim()}" fill="none" stroke="${s.color}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    } else {
+      /* Each reading is a dot where it actually happened; the trend is a
+         trailing average across it. Joining raw dots would invent readings on
+         the days between them, which is what made these charts misleading. */
+      const r = n>150 ? 1.8 : n>60 ? 2.3 : 3.2;
+      let pts="";
+      s.values.forEach((v,i)=>{
+        if (v==null||!isFinite(v)) return;
+        pts += `<circle cx="${xFor(i).toFixed(1)}" cy="${yFor(v).toFixed(1)}" r="${r}" fill="${s.color}" fill-opacity="0.55"/>`;
+      });
+      let mapath="";
+      if (opts.smooth !== false){
+        const ma = movingAverage(s.values, opts.maWindow || 7);
+        let started=false;
+        ma.forEach((v,i)=>{
+          if (v==null||!isFinite(v)){ started=false; return; }
+          const x=xFor(i), y=yFor(v);
+          mapath += (started?` L`:` M`)+` ${x.toFixed(1)} ${y.toFixed(1)}`;
+          started=true;
+        });
+      }
+      body += pts + (mapath
+        ? `<path d="${mapath.trim()}" fill="none" stroke="${s.color}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>`
+        : "");
     }
   });
+  const hasScatter = series.some(s => s.type!=="bar" && s.type!=="plain") && opts.smooth !== false;
+  const maLabel = `${opts.maWindow || 7}-day average`;
   const legend = series.length>1 || series[0].name
-    ? `<div class="chart-legend">${series.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.name||title)}</span>`).join("")}${opts.ref!=null?`<span><i style="background:${opts.ref.color||"var(--text-faint)"}"></i>${esc(opts.ref.label||"target")}</span>`:""}</div>`
+    ? `<div class="chart-legend">${series.map(s=>{
+          const dot = (s.type!=="bar" && s.type!=="plain")
+            ? `<i style="background:${s.color};opacity:.55;border-radius:50%"></i>`
+            : `<i style="background:${s.color}"></i>`;
+          return `<span>${dot}${esc(s.name||title)}</span>`;
+        }).join("")}${hasScatter
+          ? `<span><i style="background:${series[0].color};height:3px;border-radius:2px"></i>${maLabel}</span>` : ""
+        }${opts.ref!=null?`<span><i style="background:${opts.ref.color||"var(--text-faint)"}"></i>${esc(opts.ref.label||"target")}</span>`:""}</div>`
     : "";
 
   return `<div class="card chart-card">
@@ -3148,11 +3195,11 @@ function trendCharts(){
       [{name:"Distance",color:"var(--hydration)",type:"line",values:daily(dates,d=>{const l=completed(d);return (l&&isRunNorm(norm(l.actual)))?num(l.actualDistance,null):null;})}]);
 
     html += buildChart(`Long Run distance (${U})`,"", dates.map(shortDate),
-      [{name:"Long",color:"#ff9f0a",type:"line",values:daily(dates,d=>distOf(d,"Long"))}]);
+      [{name:"Long",color:"#ff9f0a",type:"line",values:daily(dates,d=>distOf(d,"Long"))}], {maWindow:28});
     html += buildChart(`Medium Run distance (${U})`,"", dates.map(shortDate),
-      [{name:"Medium",color:"#30d158",type:"line",values:daily(dates,d=>distOf(d,"Medium"))}]);
+      [{name:"Medium",color:"#30d158",type:"line",values:daily(dates,d=>distOf(d,"Medium"))}], {maWindow:28});
     html += buildChart(`Short Run distance (${U})`,"", dates.map(shortDate),
-      [{name:"Short",color:"#64d2ff",type:"line",values:daily(dates,d=>distOf(d,"Short"))}]);
+      [{name:"Short",color:"#64d2ff",type:"line",values:daily(dates,d=>distOf(d,"Short"))}], {maWindow:28});
 
     html += buildChart("Strength sessions per week","Legs · Upper 1 · Upper 2", weeks.map(shortDate),
       [{name:"Strength",color:"#bf5af2",type:"bar",values:wkVal(isStrDay)}], {integer:true});
