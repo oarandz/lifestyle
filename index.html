@@ -549,7 +549,7 @@ textarea.input{ min-height:64px; resize:vertical; }
 </div>
 
 <script>
-const APP_BUILD = "2026-08-26-gym";   // shown in Settings, so you can tell which build is live
+const APP_BUILD = "2026-08-26-gym2";   // shown in Settings, so you can tell which build is live
 
 /* =====================================================================
    DAILY — single-file health tracker (index.html + Supabase)
@@ -995,8 +995,6 @@ function defaultSettings(){
     accent: "#6E7BFF",
     compact: false,
     largeText: false,
-    firstLongRunRun: 6,   // minutes running interval for the very first Long Run
-    firstLongRunWalk: 3   // minutes walking interval for the very first Long Run
   };
 }
 
@@ -1355,279 +1353,28 @@ function toast(msg){
 }
 
 /* mm:ss formatter for timers/durations */
+/* ---- shared stopwatch, used by the teeth timer ---- */
+let SW = {};                       // named stopwatches
+function swEnsure(n){ if(!SW[n]) SW[n]={sec:0,running:false,_i:null}; return SW[n]; }
+function swToggle(name, dispId, btnId){
+  const sw=swEnsure(name);
+  if (sw.running){ clearInterval(sw._i); sw.running=false; }
+  else { sw.running=true; sw._i=setInterval(()=>{ sw.sec++; const el=document.getElementById(dispId); if(el)el.textContent=mmss(sw.sec); }, 1000); }
+  const b=document.getElementById(btnId); if(b) b.textContent = sw.running?"⏸ Pause":"▶ Start";
+}
+function swReset(name, dispId, btnId){ const sw=swEnsure(name); clearInterval(sw._i); sw.sec=0; sw.running=false;
+  const el=document.getElementById(dispId); if(el)el.textContent=mmss(0); const b=document.getElementById(btnId); if(b)b.textContent="▶ Start"; }
+function swSet(name,sec){ const sw=swEnsure(name); clearInterval(sw._i); sw.running=false; sw.sec=sec; }
+function timerWidget(name, label){
+  const sw=swEnsure(name); const disp="swdisp_"+name, btn="swbtn_"+name;
+  return `<div class="timer">
+    <div class="tdisp" id="${disp}">${mmss(sw.sec)}</div>
+    <button class="btn sm" id="${btn}" onclick="swToggle('${name}','${disp}','${btn}')">${sw.running?"⏸ Pause":"▶ Start"}</button>
+    <button class="btn sm ghost" onclick="swReset('${name}','${disp}','${btn}')">Reset</button>
+  </div>`;
+}
+
 function mmss(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60), s=sec%60; return m+":"+String(s).padStart(2,"0"); }
-
-/* =====================================================================
-   WORKOUT SCHEDULER (deterministic, run-first)
-   ---------------------------------------------------------------------
-   The ideal rolling 7-day week is: 1 Long, 1 Medium, 1 Short run +
-   2-3 strength sessions + at least 1 rest day. Running is the priority;
-   strength fits into the gaps. The schedule is rebuilt purely from
-   workout history, so the same history always yields the same plan.
-
-   Internal normalised types: Long, Medium, Short, Legs, Upper1, Upper2,
-   Rest, null(empty). Short Run 1 / Short Run 2 are *scheduling labels*
-   only — both normalise to Short and both log as "Short Run".
-   ===================================================================== */
-
-const STRENGTH_TYPES = ["Legs","Upper 1","Upper 2"];
-const ALL_WORKOUT_TYPES = ["Long Run","Medium Run","Short Run 1","Short Run 2","Legs","Upper 1","Upper 2","Rest Day","Missed Workout"];
-
-function norm(t){
-  switch(t){
-    case "Long Run": return "Long";
-    case "Medium Run": return "Medium";
-    case "Short Run": case "Short Run 1": case "Short Run 2": return "Short";
-    case "Legs": return "Legs";
-    case "Upper 1": return "Upper1";
-    case "Upper 2": return "Upper2";
-    case "Rest Day": return "Rest";
-    default: return null;
-  }
-}
-function isRunNorm(n){ return n==="Long"||n==="Medium"||n==="Short"; }
-function isStrengthNorm(n){ return n==="Legs"||n==="Upper1"||n==="Upper2"; }
-
-/* What a log actually means for scheduling. Missed -> empty (didn't happen). */
-function effectiveNorm(log){
-  if (log.status === "Missed") return null;
-  if (log.status === "Rest Day") return "Rest";
-  return norm(log.actual || log.scheduled);
-}
-
-/* Category label stored against a completed workout (shorts collapse). */
-function categoryLabel(type){
-  const n = norm(type);
-  if (n==="Long") return "Long Run";
-  if (n==="Medium") return "Medium Run";
-  if (n==="Short") return "Short Run";
-  if (n==="Legs") return "Legs";
-  if (n==="Upper1") return "Upper 1";
-  if (n==="Upper2") return "Upper 2";
-  if (n==="Rest") return "Rest Day";
-  return "Missed Workout";
-}
-
-/* Build {iso: normalisedType} from history (completed/rest/etc.). */
-function buildTimeline(){
-  const tl = {};
-  for (const log of STATE.workoutLogs){
-    const n = effectiveNorm(log);
-    if (n !== null) tl[log.date] = n;          // missed stays absent
-  }
-  return tl;
-}
-
-/* ---- window helpers operating on a timeline map ---- */
-function lookback(tl, d, span){       // returns array of norms for the `span` days BEFORE d
-  const out=[];
-  for (let i=1;i<=span;i++){ out.push(tl[addDays(d,-i)] || null); }
-  return out;                          // index 0 = yesterday
-}
-function lastDateOf(tl, before, pred){
-  for (let i=1;i<=120;i++){ const dd=addDays(before,-i); if (tl[dd]!==undefined && pred(tl[dd])) return dd; }
-  return null;
-}
-
-/* Decide the workout for a single future day `d`, given timeline so far. */
-function decideDay(tl, d){
-  const prev = tl[addDays(d,-1)] || null;            // yesterday
-  const w6   = lookback(tl, d, 6);                    // last 6 days
-  const runsPrev6 = w6.filter(isRunNorm).length;
-  const restPrev6 = w6.filter(n=>n==="Rest").length;
-  const activityPrev6 = w6.filter(n=>n!==null).length;
-  const hasLong   = w6.includes("Long");
-  const hasMedium = w6.includes("Medium");
-  const hasShort  = w6.includes("Short");
-
-  const lastLongDate = lastDateOf(tl, d, n=>n==="Long");
-  const lastRunDate  = lastDateOf(tl, d, isRunNorm);
-  const lastRunKind  = lastRunDate ? tl[lastRunDate] : null;
-  // after a Long Run, the next run must be a Short until a Short happens
-  let mustShortAfterLong = false;
-  if (lastLongDate){
-    const shortAfter = lastDateOf(tl, d, n=>n==="Short");
-    mustShortAfterLong = !shortAfter || shortAfter < lastLongDate;
-    // only applies if the most recent run was that Long (no other run since)
-    if (lastRunKind !== "Long") mustShortAfterLong = false;
-  }
-  // two-calendar-day recovery window after a Long Run (no Long/Medium/Legs)
-  const inLongWindow = (lastLongDate && (dayDiff(d,lastLongDate) <= 2));
-
-  // ---- RULE: at least one rest in every rolling 7-day period ----
-  // If the 6 prior days hold training but no rest, today must be a rest.
-  if (restPrev6 === 0 && activityPrev6 > 0) return "Rest";
-
-  const runAllowed = !isRunNorm(prev);   // never two runs in a row
-
-  // ---- run validity by kind ----
-  const longValid   = runAllowed && !hasLong && !inLongWindow && !mustShortAfterLong;
-  const mediumValid = runAllowed && !inLongWindow && !mustShortAfterLong;
-  const shortValid  = runAllowed;
-
-  // ---- STEP 1: keep three runs per rolling 7-day window ----
-  if (runsPrev6 < 3){
-    if (mustShortAfterLong && shortValid) return pickShort(tl, d);
-    if (!hasLong && longValid) return "Long";
-    if (!hasMedium && mediumValid) return "Medium";
-    if (!hasShort && shortValid) return pickShort(tl, d);
-    // all three kinds present but <3 total (rare) -> add a short for flexibility
-    if (shortValid) return pickShort(tl, d);
-  }
-
-  // ---- STEP 2: fit strength around the runs (least-recently-done first) ----
-  const strengthChoice = pickStrength(tl, d, prev, inLongWindow);
-  if (strengthChoice) return strengthChoice;
-
-  // ---- STEP 3: nothing valid -> rest ----
-  return "Rest";
-}
-
-/* Choose Short Run 1 vs Short Run 2 by which variant was scheduled least recently. */
-function pickShort(tl, d){
-  // tl stores "Short" for both; we track variant separately on the schedule object,
-  // so here we just return the normalised "Short" and let the caller assign a label.
-  return "Short";
-}
-
-/* Pick the least-recently-done valid strength workout. */
-function pickStrength(tl, d, prev, inLongWindow){
-  const candidates = [];
-  // Legs: not after Long/Medium, not in 2-day post-long window, not after Legs
-  const legsValid = prev!=="Long" && prev!=="Medium" && prev!=="Legs" && !inLongWindow;
-  // Upper: not the day after any upper session
-  const upperBlocked = (prev==="Upper1" || prev==="Upper2");
-  if (legsValid) candidates.push("Legs");
-  if (!upperBlocked) { candidates.push("Upper1"); candidates.push("Upper2"); }
-  if (!candidates.length) return null;
-
-  // least recently done wins; never-done counts as oldest. Fixed order breaks ties.
-  const order = { "Legs":0, "Upper1":1, "Upper2":2 };
-  let best=null, bestKey=Infinity;
-  for (const c of candidates){
-    const last = lastDateOf(tl, d, n=>n===c);
-    const ageKey = last ? dayDiff(d,last) : 9999;     // bigger = staler
-    // primary: staler first (so use negative age for min-search), secondary: fixed order
-    const key = (-ageKey)*10 + order[c];
-    if (key < bestKey){ bestKey=key; best=c; }
-  }
-  return best;
-}
-
-/* Map an internal normal -> a schedulable display type, choosing SR variant. */
-function toScheduledType(tl, d, n, shortVariantState){
-  if (n==="Long") return "Long Run";
-  if (n==="Medium") return "Medium Run";
-  if (n==="Short"){
-    // alternate SR1 / SR2 by which was scheduled least recently
-    const last1 = shortVariantState.lastSR1, last2 = shortVariantState.lastSR2;
-    let variant;
-    if (!last1 && !last2) variant = "Short Run 1";
-    else if (!last1) variant = "Short Run 1";
-    else if (!last2) variant = "Short Run 2";
-    else variant = (last1 <= last2) ? "Short Run 1" : "Short Run 2";
-    if (variant==="Short Run 1") shortVariantState.lastSR1 = d; else shortVariantState.lastSR2 = d;
-    return variant;
-  }
-  if (n==="Legs") return "Legs";
-  if (n==="Upper1") return "Upper 1";
-  if (n==="Upper2") return "Upper 2";
-  return "Rest Day";
-}
-
-/* Generate the rolling 28-day schedule starting today. Logged days are shown
-   as-is and fed into the timeline; unlogged days get a fresh suggestion. */
-function generateSchedule(days=28){
-  const tl = buildTimeline();
-  const start = todayISO();
-  const logByDate = {}; STATE.workoutLogs.forEach(l => { logByDate[l.date] = l; });
-
-  // seed short-variant alternation from history
-  const sv = { lastSR1:null, lastSR2:null };
-  STATE.workoutLogs.forEach(l=>{
-    if (l.scheduled==="Short Run 1") sv.lastSR1 = l.date;
-    if (l.scheduled==="Short Run 2") sv.lastSR2 = l.date;
-  });
-
-  const out=[];
-  for (let i=0;i<days;i++){
-    const d = addDays(start, i);
-    if (logByDate[d]){
-      const log = logByDate[d];
-      out.push({ date:d, logged:true, log,
-                 scheduledType: log.scheduled || categoryLabel(log.actual),
-                 status: log.status });
-    } else {
-      const n = decideDay(tl, d);
-      const schedType = toScheduledType(tl, d, n, sv);
-      tl[d] = n;                       // commit so later days see it
-      out.push({ date:d, logged:false, scheduledType: schedType, status:"Scheduled" });
-    }
-  }
-  return out;
-}
-
-/* Catch-up: any past day (from the first workout log up to yesterday) with no
-   log gets auto-filled. A scheduled Rest day is logged as a completed Rest
-   (counts as done); anything else is logged as Missed. Runs on boot so the
-   moment a day ends without a workout, it lands as "not done" on next open. */
-function backfillMissedWorkouts(){
-  const logs = STATE.workoutLogs;
-  if (!logs.length) return false;                 // schedule hasn't started yet
-  let anchor = logs[0].date;
-  for (const l of logs) if (l.date < anchor) anchor = l.date;
-  const today = todayISO();
-  if (anchor >= today) return false;
-
-  const have = {}; logs.forEach(l => { have[l.date] = true; });
-  const tl = buildTimeline();                     // live timeline we extend as we go
-  const sv = { lastSR1:null, lastSR2:null };
-  logs.forEach(l => {
-    if (l.scheduled==="Short Run 1") sv.lastSR1 = l.date;
-    if (l.scheduled==="Short Run 2") sv.lastSR2 = l.date;
-  });
-
-  let changed = false;
-  for (let d = anchor; d < today; d = addDays(d,1)){
-    if (have[d]) continue;
-    const n = decideDay(tl, d);
-    if (n === "Rest"){
-      STATE.workoutLogs.push({ id:uid("wk"), date:d, createdAt:Date.now(),
-        scheduled:"Rest Day", actual:null, category:"Rest Day", status:"Rest Day", auto:true });
-      tl[d] = "Rest";                             // a rest counts in the timeline
-    } else {
-      STATE.workoutLogs.push({ id:uid("wk"), date:d, createdAt:Date.now(),
-        scheduled: toScheduledType(tl, d, n, sv), actual:null,
-        category:"Missed Workout", status:"Missed", auto:true });
-      // a miss "didn't happen" -> deliberately left absent from the timeline
-    }
-    have[d] = true;
-    changed = true;
-  }
-  return changed;
-}
-
-/* ---- run progression / targets ---- */
-function completedRuns(kindNorm){
-  return STATE.workoutLogs
-    .filter(l => (l.status==="Completed"||l.status==="Unscheduled") && norm(l.actual)===kindNorm)
-    .sort(byDateDesc);
-}
-function mostRecentLong(){ return completedRuns("Long")[0] || null; }
-
-function nextLongTargets(){
-  const last = mostRecentLong();
-  if (!last){
-    return { run: STATE.settings.firstLongRunRun, walk: STATE.settings.firstLongRunWalk, first:true };
-  }
-  const prevRun  = num(last.actualRun, last.targetRun || STATE.settings.firstLongRunRun);
-  const prevWalk = num(last.actualWalk, last.targetWalk || STATE.settings.firstLongRunWalk);
-  const newRun = prevRun * 1.1;
-  const newWalk = ((prevWalk / prevRun) * newRun) / 0.85;
-  return { run: round(newRun,2), walk: round(newWalk,2), first:false };
-}
-function mediumTarget(){ const l=mostRecentLong(); return l ? round(num(l.actualDistance)*0.5,2) : null; }
-function shortTarget(){ const l=mostRecentLong(); return l ? round(num(l.actualDistance)*0.25,2) : null; }
 
 /* =====================================================================
    APP FRAMEWORK — screens, navigation, shared widgets
@@ -1802,12 +1549,12 @@ function homeMetas(){
   // hydration
   const hy = hydrationSummary(t);
   const hydrationPct = Math.round(clamp(hy.effective/STATE.settings.hydrationGoalMl*100,0,999));
-  // workout
-  const plan = generateSchedule(28);
-  const todayPlan = plan[0];
-  const todayWorkoutShort = todayPlan.logged
-      ? (todayPlan.status==="Rest Day"?"Rest":(todayPlan.status==="Missed"?"Missed":"Done"))
-      : shortLabel(todayPlan.scheduledType);
+  // workout: whatever's logged today, or a session running right now
+  const wk = workoutForDate(t);
+  const running = (typeof sessionActive === "function") && sessionActive();
+  const todayWorkoutShort = running ? "Now"
+      : wk ? (wk.status==="Rest Day" ? "Rest" : wk.status==="Missed" ? "Missed" : "Done")
+      : "–";
   // nutrition
   const nut = getNutrition(t);
   // body
@@ -1816,16 +1563,16 @@ function homeMetas(){
   const bm = getBrushing(t,"morning"), be = getBrushing(t,"evening");
   const brushDots = (bm&&bm.done?"●":"○")+(be&&be.done?"●":"○");
   const teethPct = (bm&&bm.done?50:0) + (be&&be.done?50:0);
-  const movePct = todayPlan.logged ? (todayPlan.status==="Missed" ? 0 : 100) : 0;
-  const moveVal = todayPlan.logged
-    ? (todayPlan.status==="Rest Day" ? "Rest" : todayPlan.status==="Missed" ? "Miss" : "Done")
-    : shortLabel(todayPlan.scheduledType);
+  const movePct = running ? 50 : wk ? (wk.status==="Missed" ? 0 : 100) : 0;
+  const moveVal = todayWorkoutShort;
 
   return {
     hydrationPct,
     hydrationMeta: `${fmt(hy.effective,0)} / ${STATE.settings.hydrationGoalMl} ml`,
     todayWorkoutShort,
-    workoutMeta: todayPlan.logged ? "Logged today" : ("Today: "+shortLabel(todayPlan.scheduledType)),
+    workoutMeta: running ? "Workout in progress"
+      : wk ? (workoutLabel(wk) + (wk.durationSec?` · ${mmss(wk.durationSec)}`:""))
+      : "Nothing logged today",
     nutritionMeta: (nut || drinkSugarKcal(t)>0) ? `${fmt(totalCaloriesFor(t),0)} kcal today` : "Not logged today",
     bodyMeta: bc ? `${fmt(bc.weight,1)} kg · ${prettyDate(bc.date)}` : "No entries yet",
     teethMeta: `${(bm&&bm.done)?"✓":"–"} AM · ${(be&&be.done)?"✓":"–"} PM`,
@@ -1834,15 +1581,39 @@ function homeMetas(){
     brushDots
   };
 }
-function shortLabel(type){
-  return type.replace("Short Run 1","Short").replace("Short Run 2","Short")
-             .replace("Long Run","Long").replace("Medium Run","Medium")
-             .replace("Rest Day","Rest").replace("Upper 1","Upper 1").replace("Upper 2","Upper 2");
-}
 
 /* =====================================================================
-   WORKOUTS — dashboard, logging, strength tracker, timer
+   SECTION 1 — WORKOUTS
+   ---------------------------------------------------------------------
+   No fixed plan any more. A workout is whatever you did on a day: you
+   start a session (from a routine or empty) and it's logged when you
+   finish. Runs and cardio are exercises inside a session like anything
+   else, so there's nothing to schedule around.
+
+   workoutLogs stays as the day-level record — one per day, holding the
+   name, duration and status — and strengthLogs holds the detail.
    ===================================================================== */
+
+/* Older logs carry the retired scheduled types; keep reading them so the
+   history and the charts stay intact. */
+const LEGACY_RUN_TYPES = ["Long Run","Medium Run","Short Run","Short Run 1","Short Run 2"];
+function isLegacyRun(log){
+  return !!log && LEGACY_RUN_TYPES.indexOf(log.actual) >= 0;
+}
+function workoutLabel(log){
+  if (!log) return "";
+  if (log.status === "Rest Day") return "Rest day";
+  if (log.status === "Missed") return "Missed";
+  return log.actual || log.category || "Workout";
+}
+function workoutIcon(log){
+  if (!log) return "➕";
+  if (log.status === "Rest Day") return "😴";
+  if (log.status === "Missed") return "✕";
+  if (isLegacyRun(log) || /run|walk|cycl|row|swim|cardio/i.test(log.actual||"")) return "🏃";
+  return "🏋️";
+}
+
 function workoutForDate(d){ return STATE.workoutLogs.find(l=>l.date===d) || null; }
 function strengthForDate(d){ return STATE.strengthLogs.find(s=>s.date===d) || null; }
 function clearWorkout(d){
@@ -1855,43 +1626,34 @@ function upsertWorkout(d, fields){
   STATE.workoutLogs.push(log);
   return log;
 }
-/* suggested/scheduled type for any date (uses a log's scheduled if present) */
-function suggestedTypeForDate(d){
-  const log = workoutForDate(d);
-  if (log && log.scheduled) return log.scheduled;
-  const tl = buildTimeline();
-  const sv = { lastSR1:null, lastSR2:null };
-  STATE.workoutLogs.forEach(l=>{ if(l.scheduled==="Short Run 1")sv.lastSR1=l.date; if(l.scheduled==="Short Run 2")sv.lastSR2=l.date; });
-  const n = decideDay(tl, d);
-  return toScheduledType(tl, d, n, sv);
+function undoWorkout(d){
+  if (!confirm("Clear this day's workout? Any sets logged for it go too.")) return;
+  clearWorkout(d); save(); toast("Cleared"); navigate("workouts");
+}
+function markRest(d){
+  upsertWorkout(d, { actual:"Rest Day", category:"Rest Day", status:"Rest Day" });
+  save(); closeSheet(); toast("Rest day logged"); navigate("workouts");
 }
 
-/* stopwatches (strength + teeth share this) */
-const SW = {};
-function swEnsure(n){ if(!SW[n]) SW[n]={sec:0,running:false,_i:null}; return SW[n]; }
-function swToggle(name, dispId, btnId){
-  const sw=swEnsure(name);
-  if (sw.running){ clearInterval(sw._i); sw.running=false; }
-  else { sw.running=true; sw._i=setInterval(()=>{ sw.sec++; const el=document.getElementById(dispId); if(el)el.textContent=mmss(sw.sec); }, 1000); }
-  const b=document.getElementById(btnId); if(b) b.textContent = sw.running?"⏸ Pause":"▶ Start";
+/* Total time trained in a window, from whichever record holds it. */
+function workoutMinutes(days){
+  const cutoff = addDays(todayISO(), -(days-1));
+  let sec = 0;
+  STATE.workoutLogs.forEach(l => {
+    if (l.date >= cutoff && l.status !== "Missed" && l.status !== "Rest Day") sec += num(l.durationSec);
+  });
+  return Math.round(sec/60);
 }
-function swReset(name, dispId, btnId){ const sw=swEnsure(name); clearInterval(sw._i); sw.sec=0; sw.running=false;
-  const el=document.getElementById(dispId); if(el)el.textContent=mmss(0); const b=document.getElementById(btnId); if(b)b.textContent="▶ Start"; }
-function swSet(name,sec){ const sw=swEnsure(name); clearInterval(sw._i); sw.running=false; sw.sec=sec; }
-function timerWidget(name, label){
-  const sw=swEnsure(name); const disp="swdisp_"+name, btn="swbtn_"+name;
-  return `<div class="timer">
-    <div class="tdisp" id="${disp}">${mmss(sw.sec)}</div>
-    <button class="btn sm" id="${btn}" onclick="swToggle('${name}','${disp}','${btn}')">${sw.running?"⏸ Pause":"▶ Start"}</button>
-    <button class="btn sm ghost" onclick="swReset('${name}','${disp}','${btn}')">Reset</button>
-  </div>`;
+function workoutsInWindow(days){
+  const cutoff = addDays(todayISO(), -(days-1));
+  return STATE.workoutLogs.filter(l => l.date >= cutoff && l.status !== "Missed" && l.status !== "Rest Day").length;
 }
 
 SCREENS.workouts = {
   title:"Workouts",
   render(){
-    const plan = generateSchedule(28);
-    const today = plan[0];
+    const t = todayISO();
+    const today = workoutForDate(t);
     return `
       ${sessionActive()?`<div class="card" style="border-color:var(--accent);">
         <div class="row spread" style="align-items:baseline;">
@@ -1900,103 +1662,51 @@ SCREENS.workouts = {
           <span class="hint">${mmss(sessionElapsed())}</span>
         </div>
         <button class="btn primary full" style="margin-top:12px;" onclick="navigate('session')">Back to it</button>
-      </div>`:""}
-      ${todayWorkoutCard(today)}
+      </div>`:`
+      <div class="card">
+        <div class="row spread" style="align-items:baseline;">
+          <div><div class="eyebrow">Today</div>
+            <div class="stat-big" style="margin-top:4px;">${today?esc(workoutLabel(today)):"Nothing logged"}</div>
+            ${today&&today.durationSec?`<div class="hint" style="margin-top:3px;">${mmss(today.durationSec)}</div>`:""}</div>
+          ${today?`<span class="pill ${today.status==="Rest Day"?"neutral":"good"}">${esc(today.status||"Logged")}</span>`:""}
+        </div>
+        <div class="btn-row" style="margin-top:14px;">
+          <button class="btn primary" onclick="navigate('routines')">🏋️ Start a workout</button>
+          ${today?`<button class="btn ghost bad" onclick="undoWorkout('${t}')">Clear</button>`
+                 :`<button class="btn ghost" onclick="markRest('${t}')">😴 Rest day</button>`}
+        </div>
+      </div>`}
+
+      ${trainingSummaryCard()}
       ${pastDaysCard()}
-      ${runTargetsCard()}
-      ${scheduleCard(plan)}
       ${recentWorkoutsCard()}
+
       <div class="btn-row" style="margin-bottom:14px">
-        <button class="btn primary" onclick="chooseWorkout('${todayISO()}', true)">＋ Log today</button>
-        <button class="btn" onclick="openBackdateSheet()">🗓️ Another day</button>
+        <button class="btn" onclick="navigate('routines')">📋 Routines</button>
+        <button class="btn ghost" onclick="openBackdateSheet()">🗓️ Log another day</button>
       </div>
-      <button class="btn full" style="margin-bottom:14px" onclick="navigate('routines')">📋 Routines &amp; gym sessions</button>
     `;
   }
 };
 
-function todayWorkoutCard(t){
-  if (t.logged){
-    const l=t.log;
-    let detail="";
-    if (l.status==="Rest Day") detail="Rest day logged.";
-    else if (l.status==="Missed") detail="Marked as missed.";
-    else {
-      const c=categoryLabel(l.actual);
-      if (norm(l.actual)==="Long") detail=`${c} · ${fmt(l.actualDistance)} ${STATE.settings.units.distance} · ${fmt(l.actualRun)}/${fmt(l.actualWalk)} min`;
-      else if (isRunNorm(norm(l.actual))) detail=`${c} · ${fmt(l.actualDistance)} ${STATE.settings.units.distance}`;
-      else detail=`${c}${l.durationSec?` · ${mmss(l.durationSec)}`:""}`;
-    }
-    return `<div class="card">
-      <div class="row spread"><h3>Today</h3><span class="pill ${l.status==="Missed"?"bad":l.status==="Rest Day"?"neutral":"good"}">${l.status}</span></div>
-      <div class="stat-big" style="margin:4px 0">${shortLabel(l.scheduled||categoryLabel(l.actual))}</div>
-      <div class="muted" style="font-size:.88rem">${esc(detail)}</div>
-      ${l.notes?`<div class="muted" style="font-size:.84rem;margin-top:8px">📝 ${esc(l.notes)}</div>`:""}
-      <div class="btn-row" style="margin-top:14px">
-        <button class="btn sm" onclick="chooseWorkout('${todayISO()}', false)">Change</button>
-        <button class="btn sm bad ghost" onclick="undoWorkout('${todayISO()}')">Clear</button>
-      </div>
-    </div>`;
-  }
-  const n = norm(t.scheduledType);
-  const icon = isRunNorm(n)?"🏃":isStrengthNorm(n)?"🏋️":"😴";
+function trainingSummaryCard(){
+  const week = workoutsInWindow(7), mins = workoutMinutes(7);
+  const month = workoutsInWindow(28);
+  const vol = STATE.strengthLogs
+    .filter(s => s.date >= addDays(todayISO(),-6) && s.exercises)
+    .reduce((v,s)=> v + (num(s.volumeKg) || sessionVolume(s)), 0);
   return `<div class="card">
-    <div class="row spread"><h3>Today’s workout</h3><span class="chip">${prettyDate(t.date)}</span></div>
-    <div class="row" style="gap:14px;align-items:center;margin:6px 0 4px">
-      <div style="font-size:2.4rem">${icon}</div>
-      <div><div class="stat-big">${shortLabel(t.scheduledType)}</div>
-      <div class="muted" style="font-size:.85rem">${workoutBlurb(n)}</div></div>
-    </div>
-    <div class="btn-row" style="margin-top:14px">
-      <button class="btn good" onclick="startComplete('${t.date}','${esc(t.scheduledType)}')">✓ Complete</button>
-      <button class="btn" onclick="markRest('${t.date}')">😴 Rest</button>
-    </div>
-    <div class="btn-row" style="margin-top:10px">
-      <button class="btn sm ghost" onclick="markMissed('${t.date}')">Missed</button>
-      <button class="btn sm ghost" onclick="chooseWorkout('${t.date}', false)">Replace</button>
+    <div class="eyebrow" style="margin-bottom:10px;">Last 7 days</div>
+    <div class="metric-grid">
+      <div class="metric"><div class="m-lab">Workouts</div><div class="m-val">${week}</div></div>
+      <div class="metric"><div class="m-lab">Time</div><div class="m-val">${mins}</div><div class="m-unit">minutes</div></div>
+      <div class="metric"><div class="m-lab">Volume</div><div class="m-val">${fmt(vol,0)}</div><div class="m-unit">kg lifted</div></div>
+      <div class="metric"><div class="m-lab">Last 28 days</div><div class="m-val">${month}</div><div class="m-unit">workouts</div></div>
     </div>
   </div>`;
 }
-function workoutBlurb(n){
-  if(n==="Long") return "Interval run — the week’s key session";
-  if(n==="Medium") return "Steady distance run";
-  if(n==="Short") return "Easy short run";
-  if(n==="Legs") return "Lower-body strength";
-  if(n==="Upper1"||n==="Upper2") return "Upper-body strength";
-  return "Recovery — take the day off";
-}
 
-function runTargetsCard(){
-  const lt = nextLongTargets();
-  const mt = mediumTarget(), st = shortTarget();
-  const u = STATE.settings.units.distance;
-  return `<div class="card">
-    <h3>Running targets</h3>
-    <div class="kv"><span class="k">Next Long Run</span><span class="v">${fmt(lt.run)} min run / ${fmt(lt.walk)} min walk${lt.first?" · first run":""}</span></div>
-    <div class="kv"><span class="k">Next Medium Run</span><span class="v">${mt!=null?`${fmt(mt)} ${u}`:"Complete a Long Run first"}</span></div>
-    <div class="kv"><span class="k">Next Short Run</span><span class="v">${st!=null?`${fmt(st)} ${u}`:"Complete a Long Run first"}</span></div>
-  </div>`;
-}
-
-function scheduleCard(plan){
-  const strip = plan.slice(0,28).map(p=>{
-    const lab = p.logged ? (p.status==="Rest Day"?"Rest":p.status==="Missed"?"Miss":shortLabel(categoryLabel(p.log.actual)||"")) : shortLabel(p.scheduledType);
-    const cls = p.logged && p.status!=="Rest Day" && p.status!=="Missed" ? "" :
-                isRunNorm(norm(p.scheduledType))?"wk-type-run":isStrengthNorm(norm(p.scheduledType))?"wk-type-str":"wk-type-rest";
-    return `<div class="cal-day ${p.date===todayISO()?"today":""}">
-      <div class="cd-dow">${dow(p.date)}</div><div class="cd-num">${dnum(p.date)}</div>
-      <div class="cd-w ${cls}">${lab||"–"}</div>
-    </div>`;
-  }).join("");
-  return `<div class="card">
-    <h3>Next 28 days</h3>
-    <div class="cal-strip">${strip}</div>
-    <div class="hint" style="margin-top:8px">Logging a workout, rest or miss instantly reshuffles the plan.</div>
-  </div>`;
-}
-
-/* The last seven days at a glance, so anything missed can be filled in.
-   Days the end-of-day backfill marked "Missed" show up here to be corrected. */
+/* The last seven days, so anything you forgot can be filled in. */
 function pastDaysCard(){
   const days = [];
   for (let i=1; i<=7; i++) days.push(addDays(todayISO(), -i));
@@ -2004,17 +1714,12 @@ function pastDaysCard(){
     <div style="padding:14px 16px 6px"><h3 style="margin:0">Fill in a past day</h3></div>
     ${days.map(d=>{
       const log = workoutForDate(d);
-      const status = !log ? "Nothing logged"
-        : log.status==="Missed" ? "Missed"
-        : log.status==="Rest Day" ? "Rest day"
-        : categoryLabel(log.actual) || "Logged";
+      const status = log ? workoutLabel(log) : "Nothing logged";
       const cls = !log ? "neutral" : log.status==="Missed" ? "bad" : log.status==="Rest Day" ? "neutral" : "good";
-      const ic  = !log ? "➕" : log.status==="Missed" ? "✕" : log.status==="Rest Day" ? "😴"
-                : isRunNorm(norm(log.actual)) ? "🏃" : "🏋️";
-      return `<div class="list-item" style="cursor:pointer;" onclick="chooseWorkout('${d}', true)">
-        <div class="li-ic">${ic}</div>
+      return `<div class="list-item" style="cursor:pointer;" onclick="startWorkoutFor('${d}')">
+        <div class="li-ic">${workoutIcon(log)}</div>
         <div class="li-main"><div class="li-title">${prettyDate(d)}</div>
-          <div class="li-sub">${esc(status)}${log&&log.status==="Missed"?" — tap to correct":""}</div></div>
+          <div class="li-sub">${esc(status)}${log&&log.durationSec?` · ${mmss(log.durationSec)}`:""}</div></div>
         <div class="li-actions"><span class="pill ${cls}">${!log?"Add":"Change"}</span></div>
       </div>`;
     }).join("")}
@@ -2026,10 +1731,10 @@ function pastDaysCard(){
 function openBackdateSheet(){
   openSheet(`
     <h3>Log a workout for another day</h3>
-    <p class="hint" style="margin-bottom:12px;">Pick the day you actually trained — the plan reshuffles around it.</p>
+    <p class="hint" style="margin-bottom:12px;">Pick the day you actually trained.</p>
     <label class="field"><span>Date</span>
       <input class="input" id="bdDate" type="date" value="${addDays(todayISO(),-1)}" max="${todayISO()}"></label>
-    <button class="btn primary full" onclick="backdateContinue()">Choose workout</button>
+    <button class="btn primary full" onclick="backdateContinue()">Continue</button>
     <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
   `);
 }
@@ -2037,100 +1742,65 @@ function backdateContinue(){
   const el = $("#bdDate");
   const d = (el && el.value) || addDays(todayISO(),-1);
   if (d > todayISO()){ toast("That's in the future"); return; }
-  chooseWorkout(d, true);
+  startWorkoutFor(d);
 }
+/* Start a session dated to a past day, or mark it as rest. */
+function startWorkoutFor(date){
+  const existing = workoutForDate(date);
+  openSheet(`
+    <h3>${prettyDate(date)}</h3>
+    ${existing?`<p class="hint" style="margin-bottom:12px;">Currently: ${esc(workoutLabel(existing))}. Starting a new session replaces it.</p>`:""}
+    <button class="btn primary full" onclick="closeSheet();startSessionFor('${date}')">🏋️ Log a workout</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="markRest('${date}')">😴 Rest day</button>
+    ${existing?`<button class="btn ghost full bad" style="margin-top:8px;" onclick="closeSheet();undoWorkout('${date}')">Clear this day</button>`:""}
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+  `);
+}
+function startSessionFor(date){
+  if (SESSION && !confirm("You've got a workout on the go. Start a new one and lose it?")){ navigate("session"); return; }
+  SESSION = null; REST = null; persistSession();
+  navigate("routines");
+  PENDING_SESSION_DATE = date;
+  toast(date===todayISO() ? "Pick a routine" : "Pick a routine for " + prettyDate(date));
+}
+let PENDING_SESSION_DATE = null;
 
 function recentWorkoutsCard(){
-  const done = STATE.workoutLogs.filter(l=>l.status==="Completed"||l.status==="Unscheduled").sort(byDateDesc).slice(0,8);
+  const recent = STATE.workoutLogs.slice().sort(byDateDesc).slice(0,10);
   return `<div class="card flush">
-    <div style="padding:14px 16px 4px"><h3 style="margin:0">Recent workouts</h3></div>
-    ${done.length? done.map(l=>{
-      const n=norm(l.actual); const ic=isRunNorm(n)?"🏃":"🏋️";
-      let sub = isRunNorm(n) ? `${fmt(l.actualDistance)} ${STATE.settings.units.distance}` : (l.durationSec?mmss(l.durationSec):"logged");
-      return `<div class="list-item">
-        <div class="li-ic">${ic}</div>
-        <div class="li-main"><div class="li-title">${esc(categoryLabel(l.actual))}</div>
-          <div class="li-sub">${prettyDate(l.date)} · ${esc(sub)}${l.status==="Unscheduled"?" · unscheduled":""}</div></div>
-        <div class="li-actions"><button class="iconbtn" onclick="undoWorkout('${l.date}')">🗑️</button></div>
+    <div style="padding:14px 16px 6px"><h3 style="margin:0">Recent</h3></div>
+    ${recent.length ? recent.map(l=>{
+      const sess = STATE.strengthLogs.find(s=>s.date===l.date && s.exercises);
+      const sub = sess
+        ? `${(sess.exercises||[]).length} exercises · ${sess.setCount||(sess.exercises||[]).reduce((n,e)=>n+(e.sets||[]).length,0)} sets${sess.volumeKg?` · ${fmt(sess.volumeKg,0)} kg`:""}`
+        : (isLegacyRun(l) && l.actualDistance ? `${fmt(l.actualDistance)} ${STATE.settings.units.distance}`
+          : (l.durationSec ? mmss(l.durationSec) : (l.status||"logged")));
+      return `<div class="list-item"${sess?` style="cursor:pointer;" onclick="openSessionDetail('${sess.id}')"`:""}>
+        <div class="li-ic">${workoutIcon(l)}</div>
+        <div class="li-main"><div class="li-title">${esc(workoutLabel(l))}</div>
+          <div class="li-sub">${prettyDate(l.date)} · ${esc(sub)}</div></div>
       </div>`;
-    }).join("") : `<div class="empty"><span class="big">🗓️</span>No workouts logged yet.</div>`}
+    }).join("") : `<div style="padding:0 16px 14px" class="hint">Nothing logged yet.</div>`}
   </div>`;
 }
-
-/* ---- actions ---- */
-function undoWorkout(d){ clearWorkout(d); save(); toast("Cleared"); navigate("workouts"); }
-function markRest(d){ upsertWorkout(d,{scheduled:suggestedTypeForDate(d),actual:null,category:"Rest Day",status:"Rest Day"}); save(); toast("Rest day logged"); navigate("workouts"); }
-function markMissed(d){ upsertWorkout(d,{scheduled:suggestedTypeForDate(d),actual:null,category:"Missed Workout",status:"Missed"}); save(); toast("Marked missed"); navigate("workouts"); }
-
-function startComplete(d, scheduledType){
-  const n = norm(scheduledType);
-  if (isRunNorm(n)) openRunSheet(d, scheduledType, false);
-  else if (isStrengthNorm(n)) startStrengthWorkout(d, scheduledType);
-  else markRest(d);
+/* A read-back of a finished session. */
+function openSessionDetail(id){
+  const s = STATE.strengthLogs.find(x=>x.id===id);
+  if (!s) return;
+  openSheet(`
+    <h3>${esc(s.name||"Workout")}</h3>
+    <p class="hint" style="margin:-4px 0 12px;">${prettyDate(s.date)}${s.durationSec?` · ${mmss(s.durationSec)}`:""}${s.volumeKg?` · ${fmt(s.volumeKg,0)} kg lifted`:""}</p>
+    ${(s.exercises||[]).map(e=>`
+      <div class="card" style="background:var(--card-2);">
+        <div class="li-title">${esc(e.name)}</div>
+        <div class="li-sub muted" style="margin-top:4px;">${(e.sets||[]).map(st=>
+          `${st.kg!=null?fmt(st.kg)+"kg":""}${st.reps!=null?"×"+fmt(st.reps,0):""}${st.seconds!=null?fmt(st.seconds,0)+"s":""}${st.km!=null?fmt(st.km)+"km":""}${st.type==="warmup"?" (W)":""}`
+        ).join("   ")}</div>
+      </div>`).join("")}
+    ${s.notes?`<p class="hint">📝 ${esc(s.notes)}</p>`:""}
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Close</button>
+  `);
 }
-function chooseWorkout(d, unscheduled){
-  const opts = [
-    ["Long Run","🏃"],["Medium Run","🏃"],["Short Run","🏃"],
-    ["Legs","🏋️"],["Upper 1","🏋️"],["Upper 2","🏋️"],
-    ["Rest Day","😴"],["Missed Workout","✕"]
-  ];
-  openSheet(`<h3>${unscheduled?"Log a workout":"Choose workout"}</h3>
-    ${d!==todayISO()?`<p class="hint" style="margin:-4px 0 12px;">For ${esc(prettyDate(d))}.</p>`:""}
-    <div class="grid2">${opts.map(([t,ic])=>`
-      <button class="btn" style="justify-content:flex-start" onclick="pickWorkout('${d}','${t}',${unscheduled})">${ic} ${t}</button>`).join("")}
-    </div>`);
-}
-function pickWorkout(d, type, unscheduled){
-  closeSheet();
-  const n=norm(type);
-  if (type==="Rest Day") return markRest(d);
-  if (type==="Missed Workout") return markMissed(d);
-  if (isRunNorm(n)) return openRunSheet(d, type, unscheduled);
-  if (isStrengthNorm(n)) return startStrengthWorkout(d, type);
-}
-
-/* ---- run logging sheet ---- */
-function openRunSheet(d, type, unscheduled){
-  const n = norm(type);
-  const u = STATE.settings.units.distance;
-  const existing = workoutForDate(d);
-  let body = `<h3>${type.replace(/ 1| 2/,"")} — ${prettyDate(d)}</h3>`;
-  if (n==="Long"){
-    const lt = nextLongTargets();
-    body += `<div class="tgt-box"><div class="tgt-lab">Target intervals</div>
-      <div class="tgt-val">${fmt(lt.run)} min run · ${fmt(lt.walk)} min walk</div></div>
-      <div class="grid2">
-        <label class="field"><span>Actual run interval (min)</span><input class="input" id="r_run" type="number" step="0.1" value="${existing&&existing.actualRun!=null?existing.actualRun:fmt(lt.run)}"></label>
-        <label class="field"><span>Actual walk interval (min)</span><input class="input" id="r_walk" type="number" step="0.1" value="${existing&&existing.actualWalk!=null?existing.actualWalk:fmt(lt.walk)}"></label>
-      </div>
-      <label class="field"><span>Total distance (${u})</span><input class="input" id="r_dist" type="number" step="0.01" value="${existing&&existing.actualDistance!=null?existing.actualDistance:""}" placeholder="e.g. 5.2"></label>`;
-  } else {
-    const tgt = n==="Medium"?mediumTarget():shortTarget();
-    body += tgt!=null
-      ? `<div class="tgt-box"><div class="tgt-lab">Target distance (${n==="Medium"?"50%":"25%"} of last Long)</div><div class="tgt-val">${fmt(tgt)} ${u}</div></div>`
-      : `<div class="warnbox">Complete a Long Run first to set a target distance.</div>`;
-    body += `<label class="field"><span>Actual distance (${u})</span><input class="input" id="r_dist" type="number" step="0.01" value="${existing&&existing.actualDistance!=null?existing.actualDistance:""}" placeholder="distance covered"></label>`;
-  }
-  body += `<label class="field"><span>Notes (optional)</span><textarea class="input" id="r_notes" placeholder="How did it feel?">${existing?esc(existing.notes||""):""}</textarea></label>
-    <button class="btn primary full" onclick="saveRun('${d}','${type}',${unscheduled})">Save run</button>`;
-  openSheet(body);
-}
-function saveRun(d, type, unscheduled){
-  const n=norm(type);
-  const lt = nextLongTargets();
-  const f = { scheduled: suggestedTypeForDate(d), actual: categoryLabel(type), category: categoryLabel(type),
-              status: unscheduled?"Unscheduled":"Completed",
-              actualDistance: num($("#r_dist")?.value, null),
-              notes: ($("#r_notes")?.value||"").trim() };
-  if (n==="Long"){
-    f.targetRun=lt.run; f.targetWalk=lt.walk;
-    f.actualRun=num($("#r_run").value, lt.run); f.actualWalk=num($("#r_walk").value, lt.walk);
-  } else { f.targetDistance = n==="Medium"?mediumTarget():shortTarget(); }
-  // a logged run counts as "Completed" if it matches the day's suggestion, else stays as chosen status
-  upsertWorkout(d, f); save(); closeSheet(); toast("Run logged"); navigate("workouts");
-}
-
-/* (the old typed-name strength sheet was replaced by the gym session in Section 12) */
 
 /* =====================================================================
    SECTION 2 — HYDRATION
@@ -3158,17 +2828,34 @@ function trendCharts(){
       const days = dates.filter(d=>mondayOf(d)===wk);
       return days.filter(test).length;
     });
-    const isRunDay = d => { const l=completed(d); return l && isRunNorm(norm(l.actual)); };
-    const isStrDay = d => { const l=completed(d); return l && !isRunNorm(norm(l.actual)) && norm(l.actual); };
-    const isMissed = d => { const l=STATE.workoutLogs.find(x=>x.date===d); return l && l.status==="Missed"; };
-    const isRest   = d => { const l=STATE.workoutLogs.find(x=>x.date===d); return l && l.status==="Rest Day"; };
+    const isRest = d => { const l=STATE.workoutLogs.find(x=>x.date===d); return l && l.status==="Rest Day"; };
 
-    html += buildChart("Workouts completed per week","Runs + strength sessions", weeks.map(shortDate),
-      [{name:"Completed",color:"var(--accent)",type:"bar",values:wkVal(d=>{const l=completed(d);return !!(l&&norm(l.actual));})}], {integer:true});
+    html += buildChart("Workouts per week","", weeks.map(shortDate),
+      [{name:"Workouts",color:"var(--accent)",type:"bar",values:wkVal(d=>!!completed(d))}], {integer:true});
 
-    const distOf = (d,kind)=>{ const l=completed(d); if(l && norm(l.actual)===kind) return num(l.actualDistance,null); return null; };
-    html += buildChart(`Running distance over time (${U})`,"All completed runs", dates.map(shortDate),
-      [{name:"Distance",color:"var(--hydration)",type:"line",values:daily(dates,d=>{const l=completed(d);return (l&&isRunNorm(norm(l.actual)))?num(l.actualDistance,null):null;})}]);
+    html += buildChart("Time trained per session (min)","", dates.map(shortDate),
+      [{name:"Minutes",color:"var(--good)",type:"line",values:daily(dates,d=>{
+        const l=completed(d); return (l && num(l.durationSec)) ? Math.round(num(l.durationSec)/60) : null;})}],
+      {integer:true});
+
+    /* Distance covered: cardio logged inside a session, plus run distances
+       recorded before the scheduler was retired. */
+    const distFor = d => {
+      let km = 0, found = false;
+      STATE.strengthLogs.forEach(sess => {
+        if (sess.date!==d || !sess.exercises) return;
+        sess.exercises.forEach(e => (e.sets||[]).forEach(st => {
+          if (st.km!=null && num(st.km)>0){ km += num(st.km); found = true; }
+        }));
+      });
+      const legacy = completed(d);
+      if (legacy && isLegacyRun(legacy) && num(legacy.actualDistance)>0){ km += num(legacy.actualDistance); found = true; }
+      return found ? round(km,2) : null;
+    };
+    if (dates.some(d=>distFor(d)!=null)){
+      html += buildChart(`Distance covered (${U})`,"cardio logged in sessions", dates.map(shortDate),
+        [{name:"Distance",color:"var(--hydration)",type:"line",values:daily(dates,distFor)}]);
+    }
 
     // gym volume: total kg shifted per session
     const volFor = d => {
@@ -3187,17 +2874,6 @@ function trendCharts(){
       html += buildChart("Working sets per session","", dates.map(shortDate),
         [{name:"Sets",color:"#64d2ff",type:"line",values:daily(dates,setsFor)}], {integer:true});
     }
-    html += buildChart(`Long Run distance (${U})`,"", dates.map(shortDate),
-      [{name:"Long",color:"#ff9f0a",type:"line",values:daily(dates,d=>distOf(d,"Long"))}], {maWindow:28});
-    html += buildChart(`Medium Run distance (${U})`,"", dates.map(shortDate),
-      [{name:"Medium",color:"#30d158",type:"line",values:daily(dates,d=>distOf(d,"Medium"))}], {maWindow:28});
-    html += buildChart(`Short Run distance (${U})`,"", dates.map(shortDate),
-      [{name:"Short",color:"#64d2ff",type:"line",values:daily(dates,d=>distOf(d,"Short"))}], {maWindow:28});
-
-    html += buildChart("Strength sessions per week","Legs · Upper 1 · Upper 2", weeks.map(shortDate),
-      [{name:"Strength",color:"#bf5af2",type:"bar",values:wkVal(isStrDay)}], {integer:true});
-    html += buildChart("Missed workouts per week","", weeks.map(shortDate),
-      [{name:"Missed",color:"var(--bad)",type:"bar",values:wkVal(isMissed)}], {integer:true});
     html += buildChart("Rest days per week","", weeks.map(shortDate),
       [{name:"Rest",color:"var(--text-dim)",type:"bar",values:wkVal(isRest)}], {integer:true});
   }
@@ -3351,7 +3027,7 @@ function flattenSettings(){
     protein_per_kg: s.proteinPerKg,
     weightUnit:s.units.weight, distanceUnit:s.units.distance, volumeUnit:s.units.volume,
     theme:s.theme, accent:s.accent, compact:s.compact, largeText:s.largeText,
-    firstLongRunRun:s.firstLongRunRun, firstLongRunWalk:s.firstLongRunWalk };
+ };
 }
 const EXPORT_CATS = [
   { key:"workouts",  lab:"Workouts",         rows:()=>STATE.workoutLogs,         json:()=>STATE.workoutLogs },
@@ -3382,7 +3058,7 @@ function mealItemRows(){
 function dataSummary(){
   const dates = new Set(allDataDates());
   const done = STATE.workoutLogs.filter(l=>l.status==="Completed"||l.status==="Unscheduled");
-  const runs = done.filter(l=>isRunNorm(norm(l.actual)));
+  const runs = done.filter(l=>isLegacyRun(l) || /run|walk|cycl|row|swim/i.test(l.actual||""));
   const strength = STATE.strengthLogs.length;
   // average hydration over logged days
   const hyDays = [...new Set(STATE.hydrationLogs.map(l=>l.date))];
@@ -3568,10 +3244,6 @@ SCREENS.settings = {
           <span><input type="number" id="set_hyd" value="${s.hydrationGoalMl}"> ml</span></div>
         <div class="tt-row"><span class="tt-lab">Teeth brushing target</span>
           <span><input type="number" id="set_brush" value="${s.brushingTargetSec}"> sec</span></div>
-        <div class="tt-row"><span class="tt-lab">First Long Run — run</span>
-          <span><input type="number" id="set_flr" value="${s.firstLongRunRun}" step="0.5"> min</span></div>
-        <div class="tt-row"><span class="tt-lab">First Long Run — walk</span>
-          <span><input type="number" id="set_flw" value="${s.firstLongRunWalk}" step="0.5"> min</span></div>
         <button class="btn sm primary" style="margin-top:12px;" onclick="saveBasicSettings()">Save targets</button>
       </div>
 
@@ -3649,11 +3321,6 @@ SCREENS.settings = {
           </div>`).join("")}
       </div>
 
-      <div class="card">
-        <h3>Workout types</h3>
-        <p class="hint">Long Run · Medium Run · Short Run · Legs · Upper 1 · Upper 2 · Rest Day. Types are fixed so the scheduler stays consistent.</p>
-      </div>
-
       <div class="danger-zone">
         <p class="hint" style="margin-bottom:10px;">Reset everything to defaults.</p>
         <button class="btn full bad" onclick="clearAllData()">Reset all data</button>
@@ -3668,8 +3335,6 @@ function saveBasicSettings(){
   const s=STATE.settings;
   s.hydrationGoalMl = Math.max(100, num($("#set_hyd").value, s.hydrationGoalMl));
   s.brushingTargetSec = Math.max(15, num($("#set_brush").value, s.brushingTargetSec));
-  s.firstLongRunRun = Math.max(0.5, num($("#set_flr").value, s.firstLongRunRun));
-  s.firstLongRunWalk = Math.max(0, num($("#set_flw").value, s.firstLongRunWalk));
   save(); toast("Targets saved");
 }
 function saveNutritionTargets(){
@@ -5439,20 +5104,6 @@ function platesFor(total, barKg){
   return { bar, perSide, ok: side < 0.001, remainder: Math.round(side * 100) / 100 };
 }
 
-/* The scheduler still decides what today's session is (Legs, Upper 1, Upper 2);
-   picking one now opens the live workout. If you've saved a routine of the same
-   name it loads that, otherwise you start empty and build it as you go. */
-function startStrengthWorkout(date, type){
-  closeSheet();
-  if (SESSION && !confirm("You've got a workout on the go. Start a new one and lose it?")) { navigate("session"); return; }
-  const match = (STATE.routines||[]).find(r => norm(r.name) === norm(type));
-  if (match){ startSession(match.id, date); SESSION.name = type; persistSession(); navigate("session"); return; }
-  startSession(null, date);
-  SESSION.name = type;
-  persistSession();
-  navigate("session");
-}
-
 /* ---- routines (templates you save and start) ---- */
 function newRoutine(name){
   const r = { id:uid("rt"), name:(name||"New routine").trim(), exercises:[],
@@ -5516,9 +5167,11 @@ function sessionElapsed(){
 
 function startSession(routineId, date){
   const r = routineId ? routineById(routineId) : null;
+  const when = date || PENDING_SESSION_DATE || todayISO();
+  PENDING_SESSION_DATE = null;
   SESSION = {
     id: uid("sess"),
-    date: date || todayISO(),
+    date: when,
     routineId: r ? r.id : null,
     name: r ? r.name : "Workout",
     startedAt: Date.now(),
@@ -5721,7 +5374,7 @@ function finishSession(){
   // would delete the session we just saved.
   const type = SESSION.name || "Workout";
   upsertWorkout(date, {
-    scheduled: suggestedTypeForDate(date), actual: type, category: "Strength",
+    actual: type, category: "Strength",
     status: "Completed", durationSec: dur, notes: SESSION.notes || ""
   });
   const wk = workoutForDate(date);
@@ -5828,7 +5481,9 @@ SCREENS.routines = {
   render(){
     const rs = (STATE.routines||[]).slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
     return `
-      <p class="hint" style="margin:0 2px 14px;">Set a workout up once, then start it whenever you're in the gym.</p>
+      <p class="hint" style="margin:0 2px 14px;">${PENDING_SESSION_DATE
+        ? `Logging for <b>${esc(prettyDate(PENDING_SESSION_DATE))}</b> — pick a routine or start empty.`
+        : "Set a workout up once, then start it whenever you're in the gym."}</p>
       ${sessionActive()?`<div class="card" style="border-color:var(--accent);">
         <div class="eyebrow">In progress</div>
         <div class="stat-big" style="margin:6px 0 10px;">${esc(SESSION.name)}</div>
@@ -6114,7 +5769,6 @@ function renderPlateResult(){
 (async function boot(){
   try { await loadState(); }
   catch(e){ console.warn("Load failed, using defaults", e); STATE = defaultState(); }
-  if (backfillMissedWorkouts()) save();          // auto-log any past unlogged days
   applySettings();
   loadSession();                                 // pick up a workout left running
   navigate(sessionActive() ? "session" : "home");
