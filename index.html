@@ -549,7 +549,7 @@ textarea.input{ min-height:64px; resize:vertical; }
 </div>
 
 <script>
-const APP_BUILD = "2026-08-25b";   // shown in Settings, so you can tell which build is live
+const APP_BUILD = "2026-08-26-gym";   // shown in Settings, so you can tell which build is live
 
 /* =====================================================================
    DAILY — single-file health tracker (index.html + Supabase)
@@ -602,6 +602,8 @@ const SB_TABLES = [
   { key:"bodyCompositionLogs", table:"body_logs" },
   { key:"brushingLogs",        table:"brushing_logs" },
   { key:"groomingLogs",        table:"grooming_logs" },
+  { key:"routines",            table:"routines" },
+  { key:"customExercises",     table:"exercises" },
   { key:"drinkDatabase",       table:"drinks" }
 ];
 const SB_SETTINGS_TABLE = "app_settings";
@@ -934,7 +936,7 @@ function reconcileState(local, remote){
 /* A state with no logged data at all (used to avoid a first-sync wipe). */
 function isEmptyState(s){
   if (!s) return true;
-  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs"];
+  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs","routines"];
   return arrs.every(k => !Array.isArray(s[k]) || s[k].length === 0);
 }
 
@@ -1201,7 +1203,9 @@ function defaultState(){
     version:1,
     settings: defaultSettings(),
     workoutLogs: [],         // run + strength session records (one per logged workout)
-    strengthLogs: [],        // detailed strength sets, linked by workoutLogId
+    strengthLogs: [],        // detailed gym sessions, linked by workoutLogId
+    routines: [],            // saved workout templates
+    customExercises: [],     // exercises you've added yourself
     hydrationLogs: [],       // individual drink entries
     nutritionLogs: [],       // one per day
     bodyCompositionLogs: [], // one per day
@@ -1286,7 +1290,7 @@ function mergeDefaults(s){
   s.settings.nutritionTargets = Object.assign({}, d.settings.nutritionTargets, (s.settings.nutritionTargets)||{});
   s.settings.units = Object.assign({}, d.settings.units, (s.settings.units)||{});
   s.settings.groomingIntervals = Object.assign({}, d.settings.groomingIntervals, (s.settings.groomingIntervals)||{});
-  ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs","drinkDatabase"]
+  ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs","routines","customExercises","drinkDatabase"]
     .forEach(k => { if(!Array.isArray(s[k])) s[k] = d[k]; });
   if (!s.drinkDatabase.length) s.drinkDatabase = d.drinkDatabase;
   upgradeDrinkDatabase(s, d);
@@ -1889,6 +1893,14 @@ SCREENS.workouts = {
     const plan = generateSchedule(28);
     const today = plan[0];
     return `
+      ${sessionActive()?`<div class="card" style="border-color:var(--accent);">
+        <div class="row spread" style="align-items:baseline;">
+          <div><div class="eyebrow">Workout in progress</div>
+            <div class="stat-big" style="margin-top:4px;">${esc(SESSION.name)}</div></div>
+          <span class="hint">${mmss(sessionElapsed())}</span>
+        </div>
+        <button class="btn primary full" style="margin-top:12px;" onclick="navigate('session')">Back to it</button>
+      </div>`:""}
       ${todayWorkoutCard(today)}
       ${pastDaysCard()}
       ${runTargetsCard()}
@@ -1898,6 +1910,7 @@ SCREENS.workouts = {
         <button class="btn primary" onclick="chooseWorkout('${todayISO()}', true)">＋ Log today</button>
         <button class="btn" onclick="openBackdateSheet()">🗓️ Another day</button>
       </div>
+      <button class="btn full" style="margin-bottom:14px" onclick="navigate('routines')">📋 Routines &amp; gym sessions</button>
     `;
   }
 };
@@ -2052,7 +2065,7 @@ function markMissed(d){ upsertWorkout(d,{scheduled:suggestedTypeForDate(d),actua
 function startComplete(d, scheduledType){
   const n = norm(scheduledType);
   if (isRunNorm(n)) openRunSheet(d, scheduledType, false);
-  else if (isStrengthNorm(n)) openStrengthSheet(d, scheduledType, false);
+  else if (isStrengthNorm(n)) startStrengthWorkout(d, scheduledType);
   else markRest(d);
 }
 function chooseWorkout(d, unscheduled){
@@ -2073,7 +2086,7 @@ function pickWorkout(d, type, unscheduled){
   if (type==="Rest Day") return markRest(d);
   if (type==="Missed Workout") return markMissed(d);
   if (isRunNorm(n)) return openRunSheet(d, type, unscheduled);
-  if (isStrengthNorm(n)) return openStrengthSheet(d, type, unscheduled);
+  if (isStrengthNorm(n)) return startStrengthWorkout(d, type);
 }
 
 /* ---- run logging sheet ---- */
@@ -2117,81 +2130,7 @@ function saveRun(d, type, unscheduled){
   upsertWorkout(d, f); save(); closeSheet(); toast("Run logged"); navigate("workouts");
 }
 
-/* ---- strength logging sheet ---- */
-let EDIT_STR = null;
-function prevSetsFor(name, beforeDate){
-  const key=name.trim().toLowerCase(); if(!key) return null;
-  const cands = STATE.strengthLogs.filter(s=>s.date<beforeDate).sort(byDateDesc);
-  for (const s of cands){ const ex=(s.exercises||[]).find(e=>e.name.trim().toLowerCase()===key); if(ex) return ex.sets; }
-  return null;
-}
-function openStrengthSheet(d, type, unscheduled){
-  const existing = strengthForDate(d);
-  if (existing && norm(workoutForDate(d)?.actual)===norm(type)){
-    EDIT_STR = JSON.parse(JSON.stringify({ date:d, type, unscheduled, exercises:existing.exercises, notes:existing.notes||"" }));
-  } else {
-    EDIT_STR = { date:d, type, unscheduled, exercises:[{name:"",sets:[{kg:"",reps:"",done:false}]}], notes:"" };
-    swReset("strength","swdisp_strength","swbtn_strength");
-  }
-  renderStrengthSheet();
-}
-function renderStrengthSheet(){
-  const e=EDIT_STR;
-  const exHtml = e.exercises.map((ex,xi)=>{
-    const prev = prevSetsFor(ex.name, e.date);
-    const rows = ex.sets.map((set,si)=>{
-      const p = prev&&prev[si] ? `${fmt(prev[si].kg)}×${fmt(prev[si].reps)}` : "–";
-      return `<tr>
-        <td class="setn">${si+1}</td>
-        <td class="prev">${p}</td>
-        <td><input type="number" step="0.5" inputmode="decimal" value="${esc(set.kg)}" onchange="strSet(${xi},${si},'kg',this.value)"></td>
-        <td><input type="number" step="1" inputmode="numeric" value="${esc(set.reps)}" onchange="strSet(${xi},${si},'reps',this.value)"></td>
-        <td class="donecell"><button class="setdone ${set.done?"on":""}" onclick="strSet(${xi},${si},'done',${!set.done})">${set.done?"✓":""}</button></td>
-        <td><button class="del-set" onclick="strDelSet(${xi},${si})">×</button></td>
-      </tr>`;
-    }).join("");
-    return `<div class="ex-block">
-      <div class="ex-head">
-        <input placeholder="Exercise name" value="${esc(ex.name)}" onchange="strName(${xi},this.value)">
-        <button class="iconbtn" title="Duplicate" onclick="strDupEx(${xi})">⧉</button>
-        <button class="iconbtn" title="Remove" onclick="strDelEx(${xi})">🗑️</button>
-      </div>
-      <table class="set-table"><thead><tr>
-        <th>Set</th><th>Prev</th><th>kg</th><th>reps</th><th>✓</th><th></th>
-      </tr></thead><tbody>${rows}</tbody></table>
-      <button class="btn tiny ghost" style="margin-top:8px" onclick="strAddSet(${xi})">＋ Add set</button>
-    </div>`;
-  }).join("");
-  openSheet(`<h3>${e.type} — ${prettyDate(e.date)}</h3>
-    ${timerWidget("strength","Workout timer")}
-    <div style="height:12px"></div>
-    ${exHtml}
-    <div class="btn-row">
-      <button class="btn sm" onclick="strAddEx()">＋ Add exercise</button>
-    </div>
-    <label class="field" style="margin-top:14px"><span>Session notes</span><textarea class="input" id="str_notes" placeholder="Optional" onchange="EDIT_STR.notes=this.value">${esc(e.notes)}</textarea></label>
-    <button class="btn primary full" onclick="saveStrength()">Save workout</button>`);
-}
-function strSet(xi,si,key,val){ if(key==="done")EDIT_STR.exercises[xi].sets[si].done=val; else EDIT_STR.exercises[xi].sets[si][key]=val; if(key==="done")renderStrengthSheet(); }
-function strName(xi,val){ EDIT_STR.exercises[xi].name=val; renderStrengthSheet(); }
-function strAddSet(xi){ const sets=EDIT_STR.exercises[xi].sets; const last=sets[sets.length-1]||{kg:"",reps:""}; sets.push({kg:last.kg,reps:last.reps,done:false}); renderStrengthSheet(); }
-function strDelSet(xi,si){ EDIT_STR.exercises[xi].sets.splice(si,1); if(!EDIT_STR.exercises[xi].sets.length)EDIT_STR.exercises[xi].sets.push({kg:"",reps:"",done:false}); renderStrengthSheet(); }
-function strAddEx(){ EDIT_STR.exercises.push({name:"",sets:[{kg:"",reps:"",done:false}]}); renderStrengthSheet(); }
-function strDelEx(xi){ EDIT_STR.exercises.splice(xi,1); if(!EDIT_STR.exercises.length)EDIT_STR.exercises.push({name:"",sets:[{kg:"",reps:"",done:false}]}); renderStrengthSheet(); }
-function strDupEx(xi){ EDIT_STR.exercises.splice(xi+1,0,JSON.parse(JSON.stringify(EDIT_STR.exercises[xi]))); renderStrengthSheet(); }
-function saveStrength(){
-  const e=EDIT_STR;
-  const exercises = e.exercises
-    .map(ex=>({ name:ex.name.trim(), sets:ex.sets.map(s=>({kg:num(s.kg,null),reps:num(s.reps,null),done:!!s.done})) }))
-    .filter(ex=>ex.name);
-  const dur = swEnsure("strength").sec;
-  upsertWorkout(e.date,{ scheduled:suggestedTypeForDate(e.date), actual:e.type, category:categoryLabel(e.type),
-    status: e.unscheduled?"Unscheduled":"Completed", durationSec:dur, notes:e.notes });
-  const wk = workoutForDate(e.date);
-  STATE.strengthLogs.push({ id:uid("str"), date:e.date, workoutLogId:wk.id, workoutType:e.type, exercises, notes:e.notes, durationSec:dur, createdAt:Date.now() });
-  swReset("strength","swdisp_strength","swbtn_strength");
-  save(); closeSheet(); toast("Workout saved"); navigate("workouts");
-}
+/* (the old typed-name strength sheet was replaced by the gym session in Section 12) */
 
 /* =====================================================================
    SECTION 2 — HYDRATION
@@ -3231,6 +3170,23 @@ function trendCharts(){
     html += buildChart(`Running distance over time (${U})`,"All completed runs", dates.map(shortDate),
       [{name:"Distance",color:"var(--hydration)",type:"line",values:daily(dates,d=>{const l=completed(d);return (l&&isRunNorm(norm(l.actual)))?num(l.actualDistance,null):null;})}]);
 
+    // gym volume: total kg shifted per session
+    const volFor = d => {
+      const sess = STATE.strengthLogs.filter(x=>x.date===d && x.exercises);
+      if (!sess.length) return null;
+      return sess.reduce((v,x)=> v + (num(x.volumeKg) || sessionVolume(x)), 0);
+    };
+    if (dates.some(d=>volFor(d)!=null)){
+      html += buildChart("Gym volume per session (kg)","total weight shifted", dates.map(shortDate),
+        [{name:"Volume",color:"#bf5af2",type:"line",values:daily(dates,volFor)}], {integer:true});
+      const setsFor = d => {
+        const sess = STATE.strengthLogs.filter(x=>x.date===d && x.exercises);
+        if (!sess.length) return null;
+        return sess.reduce((n,x)=> n + (x.exercises||[]).reduce((m,e)=>m+(e.sets||[]).length,0), 0);
+      };
+      html += buildChart("Working sets per session","", dates.map(shortDate),
+        [{name:"Sets",color:"#64d2ff",type:"line",values:daily(dates,setsFor)}], {integer:true});
+    }
     html += buildChart(`Long Run distance (${U})`,"", dates.map(shortDate),
       [{name:"Long",color:"#ff9f0a",type:"line",values:daily(dates,d=>distOf(d,"Long"))}], {maWindow:28});
     html += buildChart(`Medium Run distance (${U})`,"", dates.map(shortDate),
@@ -3363,12 +3319,24 @@ function objectsToCsv(rows){
   const keys=[...set];
   return keys.join(",") + "\n" + rows.map(r=>keys.map(k=>csvEscape(r[k])).join(",")).join("\n");
 }
+function routineRows(){
+  const out=[];
+  (STATE.routines||[]).forEach(r=>(r.exercises||[]).forEach((e,i)=>{
+    out.push({ routine:r.name, order:i+1, exercise:e.name, sets:(e.sets||[]).length, restSec:e.restSec });
+  }));
+  return out;
+}
 function strengthRows(){
   const out=[];
   STATE.strengthLogs.forEach(s=>{
     (s.exercises||[]).forEach(ex=>{
       (ex.sets||[]).forEach((set,i)=>{
-        out.push({ date:s.date, workoutType:s.workoutType, exercise:ex.name, setNumber:i+1, kg:set.kg, reps:set.reps, done:set.done, durationSec:s.durationSec, notes:s.notes });
+        out.push({ date:s.date, workout:s.name||s.workoutType||"", exercise:ex.name,
+          setNumber:i+1, setType:set.type||"normal",
+          kg:set.kg, reps:set.reps, seconds:set.seconds, km:set.km,
+          volumeKg: (num(set.kg)&&num(set.reps)&&set.type!=="warmup") ? round(num(set.kg)*num(set.reps),1) : "",
+          est1RM: num(set.kg)&&num(set.reps) ? round(estimate1RM(set.kg,set.reps),1) : "",
+          pr:set.pr||"", restSec:ex.restSec||"", durationSec:s.durationSec, notes:s.notes });
       });
     });
   });
@@ -3387,7 +3355,8 @@ function flattenSettings(){
 }
 const EXPORT_CATS = [
   { key:"workouts",  lab:"Workouts",         rows:()=>STATE.workoutLogs,         json:()=>STATE.workoutLogs },
-  { key:"strength",  lab:"Strength logs",     rows:()=>strengthRows(),            json:()=>STATE.strengthLogs },
+  { key:"strength",  lab:"Gym sets",          rows:()=>strengthRows(),            json:()=>STATE.strengthLogs },
+  { key:"routines",  lab:"Routines",          rows:()=>routineRows(),             json:()=>STATE.routines },
   { key:"hydration", lab:"Hydration",         rows:()=>STATE.hydrationLogs,       json:()=>STATE.hydrationLogs },
   { key:"drinks",    lab:"Drink database",    rows:()=>STATE.drinkDatabase,       json:()=>STATE.drinkDatabase },
   { key:"nutrition", lab:"Nutrition",         rows:()=>STATE.nutritionLogs,       json:()=>STATE.nutritionLogs },
@@ -5119,6 +5088,1027 @@ function applyScaleImport(mode){
 }
 
 /* =====================================================================
+   SECTION 12 — GYM  (exercise library, routines, live sessions)
+   Modelled on Strong: pick from a library, save routines, then run a
+   session with an overall timer and a rest timer that starts itself
+   the moment you tick a set off.
+   ===================================================================== */
+
+/* Exercise types decide which fields a set collects:
+   w  weight x reps        b  bodyweight reps       wb weighted bodyweight
+   a  assisted (weight taken off)                   d  timed hold
+   c  cardio (distance + time)                                            */
+const EX_TYPES = {
+  w:  { lab:"Weight & reps",      fields:["kg","reps"] },
+  b:  { lab:"Bodyweight reps",    fields:["reps"] },
+  wb: { lab:"Weighted bodyweight",fields:["kg","reps"] },
+  a:  { lab:"Assisted",           fields:["kg","reps"] },
+  d:  { lab:"Timed hold",         fields:["seconds"] },
+  c:  { lab:"Cardio",             fields:["km","seconds"] }
+};
+const MUSCLES = ["Chest","Back","Shoulders","Arms","Legs","Core","Cardio","Full body","Mobility"];
+function X(name, muscle, equipment, type){
+  return { id:"lib:"+name.toLowerCase().replace(/[^a-z0-9]+/g,"-"), name, muscle, equipment, type };
+}
+const EXERCISE_LIBRARY = [
+  X("Barbell Bench Press","Chest","Barbell","w"),
+  X("Incline Barbell Bench Press","Chest","Barbell","w"),
+  X("Decline Barbell Bench Press","Chest","Barbell","w"),
+  X("Dumbbell Bench Press","Chest","Dumbbell","w"),
+  X("Incline Dumbbell Bench Press","Chest","Dumbbell","w"),
+  X("Decline Dumbbell Press","Chest","Dumbbell","w"),
+  X("Dumbbell Fly","Chest","Dumbbell","w"),
+  X("Incline Dumbbell Fly","Chest","Dumbbell","w"),
+  X("Cable Fly","Chest","Cable","w"),
+  X("Low Cable Fly","Chest","Cable","w"),
+  X("Cable Crossover","Chest","Cable","w"),
+  X("Machine Chest Press","Chest","Machine","w"),
+  X("Pec Deck","Chest","Machine","w"),
+  X("Push Up","Chest","Bodyweight","b"),
+  X("Incline Push Up","Chest","Bodyweight","b"),
+  X("Decline Push Up","Chest","Bodyweight","b"),
+  X("Weighted Push Up","Chest","Bodyweight","wb"),
+  X("Dip (Chest)","Chest","Bodyweight","b"),
+  X("Weighted Chest Dip","Chest","Bodyweight","wb"),
+  X("Smith Machine Bench Press","Chest","Machine","w"),
+  X("Svend Press","Chest","Plate","w"),
+  X("Pull Up","Back","Bodyweight","b"),
+  X("Weighted Pull Up","Back","Bodyweight","wb"),
+  X("Assisted Pull Up","Back","Machine","a"),
+  X("Chin Up","Back","Bodyweight","b"),
+  X("Weighted Chin Up","Back","Bodyweight","wb"),
+  X("Assisted Chin Up","Back","Machine","a"),
+  X("Lat Pulldown","Back","Cable","w"),
+  X("Close Grip Lat Pulldown","Back","Cable","w"),
+  X("Wide Grip Lat Pulldown","Back","Cable","w"),
+  X("Straight Arm Pulldown","Back","Cable","w"),
+  X("Barbell Row","Back","Barbell","w"),
+  X("Pendlay Row","Back","Barbell","w"),
+  X("Dumbbell Row","Back","Dumbbell","w"),
+  X("Chest Supported Row","Back","Dumbbell","w"),
+  X("Seated Cable Row","Back","Cable","w"),
+  X("T-Bar Row","Back","Barbell","w"),
+  X("Machine Row","Back","Machine","w"),
+  X("Inverted Row","Back","Bodyweight","b"),
+  X("Deadlift","Back","Barbell","w"),
+  X("Sumo Deadlift","Back","Barbell","w"),
+  X("Romanian Deadlift","Back","Barbell","w"),
+  X("Trap Bar Deadlift","Back","Barbell","w"),
+  X("Rack Pull","Back","Barbell","w"),
+  X("Good Morning","Back","Barbell","w"),
+  X("Back Extension","Back","Bodyweight","b"),
+  X("Weighted Back Extension","Back","Bodyweight","wb"),
+  X("Shrug","Back","Barbell","w"),
+  X("Dumbbell Shrug","Back","Dumbbell","w"),
+  X("Face Pull","Back","Cable","w"),
+  X("Overhead Press","Shoulders","Barbell","w"),
+  X("Seated Overhead Press","Shoulders","Barbell","w"),
+  X("Push Press","Shoulders","Barbell","w"),
+  X("Dumbbell Shoulder Press","Shoulders","Dumbbell","w"),
+  X("Arnold Press","Shoulders","Dumbbell","w"),
+  X("Machine Shoulder Press","Shoulders","Machine","w"),
+  X("Lateral Raise","Shoulders","Dumbbell","w"),
+  X("Cable Lateral Raise","Shoulders","Cable","w"),
+  X("Machine Lateral Raise","Shoulders","Machine","w"),
+  X("Front Raise","Shoulders","Dumbbell","w"),
+  X("Plate Front Raise","Shoulders","Plate","w"),
+  X("Rear Delt Fly","Shoulders","Dumbbell","w"),
+  X("Reverse Pec Deck","Shoulders","Machine","w"),
+  X("Upright Row","Shoulders","Barbell","w"),
+  X("Landmine Press","Shoulders","Barbell","w"),
+  X("Pike Push Up","Shoulders","Bodyweight","b"),
+  X("Handstand Push Up","Shoulders","Bodyweight","b"),
+  X("Barbell Curl","Arms","Barbell","w"),
+  X("EZ Bar Curl","Arms","Barbell","w"),
+  X("Dumbbell Curl","Arms","Dumbbell","w"),
+  X("Hammer Curl","Arms","Dumbbell","w"),
+  X("Incline Dumbbell Curl","Arms","Dumbbell","w"),
+  X("Concentration Curl","Arms","Dumbbell","w"),
+  X("Preacher Curl","Arms","Barbell","w"),
+  X("Cable Curl","Arms","Cable","w"),
+  X("Spider Curl","Arms","Dumbbell","w"),
+  X("Reverse Curl","Arms","Barbell","w"),
+  X("Zottman Curl","Arms","Dumbbell","w"),
+  X("Close Grip Bench Press","Arms","Barbell","w"),
+  X("Tricep Dip","Arms","Bodyweight","b"),
+  X("Weighted Tricep Dip","Arms","Bodyweight","wb"),
+  X("Assisted Dip","Arms","Machine","a"),
+  X("Tricep Pushdown","Arms","Cable","w"),
+  X("Rope Pushdown","Arms","Cable","w"),
+  X("Overhead Tricep Extension","Arms","Dumbbell","w"),
+  X("Cable Overhead Extension","Arms","Cable","w"),
+  X("Skullcrusher","Arms","Barbell","w"),
+  X("Tricep Kickback","Arms","Dumbbell","w"),
+  X("Diamond Push Up","Arms","Bodyweight","b"),
+  X("Wrist Curl","Arms","Barbell","w"),
+  X("Reverse Wrist Curl","Arms","Barbell","w"),
+  X("Farmers Walk","Arms","Dumbbell","c"),
+  X("Back Squat","Legs","Barbell","w"),
+  X("Front Squat","Legs","Barbell","w"),
+  X("High Bar Squat","Legs","Barbell","w"),
+  X("Low Bar Squat","Legs","Barbell","w"),
+  X("Box Squat","Legs","Barbell","w"),
+  X("Goblet Squat","Legs","Dumbbell","w"),
+  X("Hack Squat","Legs","Machine","w"),
+  X("Smith Machine Squat","Legs","Machine","w"),
+  X("Leg Press","Legs","Machine","w"),
+  X("Bulgarian Split Squat","Legs","Dumbbell","w"),
+  X("Split Squat","Legs","Dumbbell","w"),
+  X("Walking Lunge","Legs","Dumbbell","w"),
+  X("Reverse Lunge","Legs","Dumbbell","w"),
+  X("Forward Lunge","Legs","Dumbbell","w"),
+  X("Step Up","Legs","Dumbbell","w"),
+  X("Leg Extension","Legs","Machine","w"),
+  X("Leg Curl","Legs","Machine","w"),
+  X("Seated Leg Curl","Legs","Machine","w"),
+  X("Nordic Curl","Legs","Bodyweight","b"),
+  X("Stiff Leg Deadlift","Legs","Barbell","w"),
+  X("Single Leg Romanian Deadlift","Legs","Dumbbell","w"),
+  X("Hip Thrust","Legs","Barbell","w"),
+  X("Glute Bridge","Legs","Barbell","w"),
+  X("Cable Kickback","Legs","Cable","w"),
+  X("Hip Abduction","Legs","Machine","w"),
+  X("Hip Adduction","Legs","Machine","w"),
+  X("Calf Raise","Legs","Machine","w"),
+  X("Standing Calf Raise","Legs","Barbell","w"),
+  X("Seated Calf Raise","Legs","Machine","w"),
+  X("Single Leg Calf Raise","Legs","Bodyweight","b"),
+  X("Pistol Squat","Legs","Bodyweight","b"),
+  X("Sissy Squat","Legs","Bodyweight","b"),
+  X("Wall Sit","Legs","Bodyweight","d"),
+  X("Air Squat","Legs","Bodyweight","b"),
+  X("Jump Squat","Legs","Bodyweight","b"),
+  X("Box Jump","Legs","Bodyweight","b"),
+  X("Plank","Core","Bodyweight","d"),
+  X("Side Plank","Core","Bodyweight","d"),
+  X("Weighted Plank","Core","Bodyweight","d"),
+  X("Crunch","Core","Bodyweight","b"),
+  X("Cable Crunch","Core","Cable","w"),
+  X("Sit Up","Core","Bodyweight","b"),
+  X("Weighted Sit Up","Core","Bodyweight","wb"),
+  X("Hanging Leg Raise","Core","Bodyweight","b"),
+  X("Hanging Knee Raise","Core","Bodyweight","b"),
+  X("Lying Leg Raise","Core","Bodyweight","b"),
+  X("Russian Twist","Core","Bodyweight","b"),
+  X("Weighted Russian Twist","Core","Plate","wb"),
+  X("Ab Wheel Rollout","Core","Other","b"),
+  X("Mountain Climber","Core","Bodyweight","b"),
+  X("Bicycle Crunch","Core","Bodyweight","b"),
+  X("Dead Bug","Core","Bodyweight","b"),
+  X("Bird Dog","Core","Bodyweight","b"),
+  X("Hollow Hold","Core","Bodyweight","d"),
+  X("Pallof Press","Core","Cable","w"),
+  X("Woodchop","Core","Cable","w"),
+  X("Dragon Flag","Core","Bodyweight","b"),
+  X("Toes To Bar","Core","Bodyweight","b"),
+  X("Treadmill Run","Cardio","Machine","c"),
+  X("Treadmill Walk","Cardio","Machine","c"),
+  X("Outdoor Run","Cardio","Bodyweight","c"),
+  X("Outdoor Walk","Cardio","Bodyweight","c"),
+  X("Exercise Bike","Cardio","Machine","c"),
+  X("Spin Bike","Cardio","Machine","c"),
+  X("Rowing Machine","Cardio","Machine","c"),
+  X("Elliptical","Cardio","Machine","c"),
+  X("Stair Climber","Cardio","Machine","c"),
+  X("Ski Erg","Cardio","Machine","c"),
+  X("Assault Bike","Cardio","Machine","c"),
+  X("Swimming","Cardio","Other","c"),
+  X("Cycling","Cardio","Other","c"),
+  X("Skipping","Cardio","Other","d"),
+  X("Burpee","Cardio","Bodyweight","b"),
+  X("Battle Ropes","Cardio","Other","d"),
+  X("Sled Push","Cardio","Other","c"),
+  X("Sled Pull","Cardio","Other","c"),
+  X("Kettlebell Swing","Full body","Kettlebell","w"),
+  X("Kettlebell Clean","Full body","Kettlebell","w"),
+  X("Kettlebell Snatch","Full body","Kettlebell","w"),
+  X("Turkish Get Up","Full body","Kettlebell","w"),
+  X("Power Clean","Full body","Barbell","w"),
+  X("Hang Clean","Full body","Barbell","w"),
+  X("Clean And Jerk","Full body","Barbell","w"),
+  X("Snatch","Full body","Barbell","w"),
+  X("Thruster","Full body","Barbell","w"),
+  X("Wall Ball","Full body","Other","w"),
+  X("Devils Press","Full body","Dumbbell","w"),
+  X("Man Maker","Full body","Dumbbell","w"),
+  X("Bear Crawl","Full body","Bodyweight","d"),
+  X("Hip Flexor Stretch","Mobility","Bodyweight","d"),
+  X("Hamstring Stretch","Mobility","Bodyweight","d"),
+  X("Pigeon Pose","Mobility","Bodyweight","d"),
+  X("Cat Cow","Mobility","Bodyweight","b"),
+  X("Thoracic Rotation","Mobility","Bodyweight","b"),
+  X("Shoulder Dislocate","Mobility","Other","b"),
+  X("Couch Stretch","Mobility","Bodyweight","d"),
+  X("Foam Roll","Mobility","Other","d"),
+  X("Childs Pose","Mobility","Bodyweight","d"),
+  X("Downward Dog","Mobility","Bodyweight","d"),
+  X("90/90 Hip Switch","Mobility","Bodyweight","b"),
+  X("Ankle Mobilisation","Mobility","Bodyweight","b")
+];
+
+/* Built-ins plus anything you've added yourself. */
+function allExercises(){
+  return EXERCISE_LIBRARY.concat(STATE.customExercises || []);
+}
+function exerciseById(id){
+  const all = allExercises();
+  for (let i=0;i<all.length;i++) if (all[i].id===id) return all[i];
+  return null;
+}
+function exerciseByName(name){
+  const k = String(name||"").trim().toLowerCase();
+  const all = allExercises();
+  for (let i=0;i<all.length;i++) if (all[i].name.toLowerCase()===k) return all[i];
+  return null;
+}
+function exType(ex){ return (ex && EX_TYPES[ex.type]) ? ex.type : "w"; }
+function exFields(ex){ return EX_TYPES[exType(ex)].fields; }
+function searchExercises(q, muscle){
+  const term = String(q||"").trim().toLowerCase();
+  return allExercises().filter(e => {
+    if (muscle && muscle!=="All" && e.muscle!==muscle) return false;
+    if (!term) return true;
+    return e.name.toLowerCase().indexOf(term) >= 0 || e.equipment.toLowerCase().indexOf(term) >= 0;
+  }).sort((a,b)=>a.name.localeCompare(b.name));
+}
+function addCustomExercise(name, muscle, equipment, type){
+  const nm = String(name||"").trim();
+  if (!nm) return null;
+  if (exerciseByName(nm)) return null;                       // no duplicates
+  const ex = { id:uid("ex"), name:nm, muscle:muscle||"Other", equipment:equipment||"Other",
+               type:type||"w", custom:true, createdAt:Date.now() };
+  STATE.customExercises.push(ex);
+  save();
+  return ex;
+}
+
+/* ---- set helpers ---- */
+const SET_TYPES = { normal:{lab:"Normal",tag:""}, warmup:{lab:"Warm-up",tag:"W"},
+                    drop:{lab:"Drop set",tag:"D"}, failure:{lab:"To failure",tag:"F"} };
+function blankSet(type){ return { kg:"", reps:"", seconds:"", km:"", done:false, type:type||"normal" }; }
+/* Warm-ups don't count towards volume or personal bests. */
+function isWorkingSet(s){ return s && s.done && s.type!=="warmup"; }
+function setVolume(ex, s){
+  if (!isWorkingSet(s)) return 0;
+  const t = exType(ex);
+  if (t==="w" || t==="wb") return num(s.kg) * num(s.reps);
+  if (t==="a") return 0;                                     // assistance isn't load lifted
+  return 0;
+}
+/* Epley: the standard estimate, and the one Strong uses. */
+function estimate1RM(kg, reps){
+  const w = num(kg), r = num(reps);
+  if (!(w>0) || !(r>0)) return 0;
+  if (r === 1) return w;
+  return w * (1 + r/30);
+}
+function sessionVolume(sess){
+  let v = 0;
+  (sess.exercises||[]).forEach(se => {
+    const ex = exerciseById(se.exerciseId) || { type:se.type||"w" };
+    (se.sets||[]).forEach(s => { v += setVolume(ex, s); });
+  });
+  return Math.round(v);
+}
+function sessionSetCount(sess){
+  let n = 0;
+  (sess.exercises||[]).forEach(se => (se.sets||[]).forEach(s => { if (s.done) n++; }));
+  return n;
+}
+
+/* ---- history and personal bests ---- */
+function gymSessions(){
+  return (STATE.strengthLogs||[]).filter(s => s && s.exercises).sort(byDateDesc);
+}
+/* Every completed instance of an exercise, newest first. */
+function exerciseHistory(exerciseId){
+  const out = [];
+  gymSessions().forEach(sess => {
+    (sess.exercises||[]).forEach(se => {
+      if (se.exerciseId !== exerciseId) return;
+      const sets = (se.sets||[]).filter(s=>s.done);
+      if (sets.length) out.push({ date:sess.date, sets, sessionId:sess.id });
+    });
+  });
+  return out;
+}
+function lastPerformance(exerciseId, beforeDate){
+  const h = exerciseHistory(exerciseId).filter(x => !beforeDate || x.date < beforeDate);
+  return h.length ? h[0] : null;
+}
+/* Heaviest set, best estimated 1RM, best single-session volume. */
+function exercisePR(exerciseId){
+  const ex = exerciseById(exerciseId);
+  const pr = { weight:0, reps:0, oneRM:0, volume:0, date:null, seconds:0, km:0 };
+  exerciseHistory(exerciseId).forEach(h => {
+    let sessVol = 0;
+    h.sets.forEach(s => {
+      if (s.type === "warmup") return;
+      const kg = num(s.kg), reps = num(s.reps);
+      if (kg > pr.weight){ pr.weight = kg; pr.reps = reps; pr.date = h.date; }
+      const e = estimate1RM(kg, reps);
+      if (e > pr.oneRM) pr.oneRM = e;
+      if (num(s.seconds) > pr.seconds) pr.seconds = num(s.seconds);
+      if (num(s.km) > pr.km) pr.km = num(s.km);
+      sessVol += setVolume(ex || {type:"w"}, Object.assign({}, s, {done:true}));
+    });
+    if (sessVol > pr.volume) pr.volume = sessVol;
+  });
+  pr.oneRM = Math.round(pr.oneRM * 10) / 10;
+  return pr;
+}
+/* Did this set beat anything? Checked against history excluding today's session. */
+function setBeatsPR(exerciseId, set, priorPR){
+  if (!set || set.type === "warmup") return null;
+  const kg = num(set.kg), reps = num(set.reps);
+  if (kg > 0 && kg > priorPR.weight) return "weight";
+  if (kg > 0 && estimate1RM(kg, reps) > priorPR.oneRM) return "1rm";
+  return null;
+}
+
+/* ---- plate calculator ---- */
+const PLATES = [25, 20, 15, 10, 5, 2.5, 1.25];
+function platesFor(total, barKg){
+  const bar = num(barKg, 20);
+  let side = (num(total) - bar) / 2;
+  if (!(side > 0)) return { bar, perSide:[], ok:num(total)===bar, remainder:0 };
+  const perSide = [];
+  PLATES.forEach(p => {
+    while (side >= p - 0.001){ perSide.push(p); side = Math.round((side - p) * 100) / 100; }
+  });
+  return { bar, perSide, ok: side < 0.001, remainder: Math.round(side * 100) / 100 };
+}
+
+/* The scheduler still decides what today's session is (Legs, Upper 1, Upper 2);
+   picking one now opens the live workout. If you've saved a routine of the same
+   name it loads that, otherwise you start empty and build it as you go. */
+function startStrengthWorkout(date, type){
+  closeSheet();
+  if (SESSION && !confirm("You've got a workout on the go. Start a new one and lose it?")) { navigate("session"); return; }
+  const match = (STATE.routines||[]).find(r => norm(r.name) === norm(type));
+  if (match){ startSession(match.id, date); SESSION.name = type; persistSession(); navigate("session"); return; }
+  startSession(null, date);
+  SESSION.name = type;
+  persistSession();
+  navigate("session");
+}
+
+/* ---- routines (templates you save and start) ---- */
+function newRoutine(name){
+  const r = { id:uid("rt"), name:(name||"New routine").trim(), exercises:[],
+              createdAt:Date.now(), updatedAt:Date.now() };
+  STATE.routines.push(r);
+  save();
+  return r;
+}
+function routineById(id){ return (STATE.routines||[]).find(r=>r.id===id) || null; }
+function deleteRoutine(id){
+  STATE.routines = STATE.routines.filter(r=>r.id!==id);
+  save(); toast("Routine deleted"); navigate("routines");
+}
+function routineExerciseCount(r){ return (r.exercises||[]).length; }
+function routineSetCount(r){
+  return (r.exercises||[]).reduce((n,e)=>n + (e.sets||[]).length, 0);
+}
+/* A routine entry: which exercise, how much rest, target sets. */
+function makeRoutineEntry(ex, sets){
+  return { id:uid("re"), exerciseId:ex.id, name:ex.name, type:ex.type,
+           restSec: defaultRestFor(ex), superset:null,
+           sets: sets || [blankTargetSet(), blankTargetSet(), blankTargetSet()] };
+}
+function blankTargetSet(){ return { targetReps:"", targetKg:"", type:"normal" }; }
+/* Big compound lifts want longer rest than isolation work. */
+function defaultRestFor(ex){
+  if (!ex) return 90;
+  if (ex.type === "c" || ex.muscle === "Mobility") return 30;
+  if (ex.muscle === "Core") return 45;
+  if (/squat|deadlift|bench|press|row|pull up|chin up|clean|snatch/i.test(ex.name)) return 150;
+  return 90;
+}
+
+/* ---- the live session --------------------------------------------------
+   Kept in localStorage as well as memory so a phone call, a lock screen or
+   an accidental swipe doesn't lose a workout in progress. */
+const SESSION_KEY = "daily_active_session_v1";
+let SESSION = null;          // the workout currently running
+let REST = null;             // { endsAt, total, exIndex } — the rest countdown
+let SESSION_TICK = null;
+
+function loadSession(){
+  try { const raw = localStorage.getItem(SESSION_KEY); SESSION = raw ? JSON.parse(raw) : null; }
+  catch(e){ SESSION = null; }
+  if (SESSION && SESSION.rest && SESSION.rest.endsAt > Date.now()) REST = SESSION.rest;
+  return SESSION;
+}
+function persistSession(){
+  try {
+    if (SESSION){ SESSION.rest = REST; localStorage.setItem(SESSION_KEY, JSON.stringify(SESSION)); }
+    else localStorage.removeItem(SESSION_KEY);
+  } catch(e){}
+}
+function sessionActive(){ return !!SESSION; }
+function sessionElapsed(){
+  if (!SESSION) return 0;
+  const paused = num(SESSION.pausedMs);
+  const base = SESSION.pausedAt ? SESSION.pausedAt : Date.now();
+  return Math.max(0, Math.floor((base - SESSION.startedAt - paused) / 1000));
+}
+
+function startSession(routineId, date){
+  const r = routineId ? routineById(routineId) : null;
+  SESSION = {
+    id: uid("sess"),
+    date: date || todayISO(),
+    routineId: r ? r.id : null,
+    name: r ? r.name : "Workout",
+    startedAt: Date.now(),
+    pausedMs: 0,
+    pausedAt: null,
+    notes: "",
+    exercises: (r ? r.exercises : []).map(e => ({
+      id: uid("se"), exerciseId: e.exerciseId, name: e.name, type: e.type,
+      restSec: num(e.restSec, 90), superset: e.superset || null,
+      sets: (e.sets||[]).map(t => Object.assign(blankSet(t.type), {
+        kg: t.targetKg!=null ? t.targetKg : "", reps: t.targetReps!=null ? t.targetReps : ""
+      }))
+    }))
+  };
+  REST = null;
+  persistSession();
+  navigate("session");
+}
+function discardSession(){
+  if (!confirm("Throw this workout away? Nothing will be saved.")) return;
+  SESSION = null; REST = null; stopSessionTick(); persistSession();
+  toast("Workout discarded"); navigate("workouts");
+}
+function pauseSession(){
+  if (!SESSION) return;
+  if (SESSION.pausedAt){
+    SESSION.pausedMs = num(SESSION.pausedMs) + (Date.now() - SESSION.pausedAt);
+    SESSION.pausedAt = null;
+  } else SESSION.pausedAt = Date.now();
+  persistSession(); navigate("session");
+}
+
+/* ---- rest timer ---- */
+function startRest(seconds, exIndex){
+  const secs = Math.max(0, num(seconds));
+  if (!secs){ REST = null; persistSession(); return; }
+  REST = { endsAt: Date.now() + secs*1000, total: secs, exIndex: exIndex };
+  persistSession();
+}
+function restRemaining(){
+  if (!REST) return 0;
+  return Math.max(0, Math.ceil((REST.endsAt - Date.now()) / 1000));
+}
+function restRunning(){ return !!REST && restRemaining() > 0; }
+function adjustRest(delta){
+  if (!REST) return;
+  REST.endsAt += num(delta) * 1000;
+  if (REST.endsAt < Date.now()) REST = null;
+  persistSession(); renderSessionTimers();
+}
+function skipRest(){ REST = null; persistSession(); renderSessionTimers(); }
+
+/* A short two-tone beep when rest is up — no audio files needed. */
+function restChime(){
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    [0, 0.22].forEach((offset, i) => {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = i ? 660 : 880;
+      gain.gain.setValueAtTime(0.001, ctx.currentTime + offset);
+      gain.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.18);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + offset); osc.stop(ctx.currentTime + offset + 0.2);
+    });
+    if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+    setTimeout(()=>{ try{ ctx.close(); }catch(e){} }, 1200);
+  } catch(e){}
+}
+
+function startSessionTick(){
+  stopSessionTick();
+  SESSION_TICK = setInterval(() => {
+    if (!SESSION){ stopSessionTick(); return; }
+    if (REST && restRemaining() === 0){ REST = null; persistSession(); restChime(); navigate("session"); return; }
+    renderSessionTimers();
+  }, 1000);
+}
+function stopSessionTick(){ if (SESSION_TICK){ clearInterval(SESSION_TICK); SESSION_TICK = null; } }
+/* Update just the two clocks, so typing in a field isn't interrupted. */
+function renderSessionTimers(){
+  const el = document.getElementById("sessClock");
+  if (el) el.textContent = mmss(sessionElapsed());
+  const rb = document.getElementById("restBar");
+  if (rb){
+    if (restRunning()){
+      const left = restRemaining();
+      rb.style.display = "";
+      const num_ = document.getElementById("restNum");
+      if (num_) num_.textContent = mmss(left);
+      const fill = document.getElementById("restFill");
+      if (fill) fill.style.width = (100 - (left / REST.total * 100)) + "%";
+    } else rb.style.display = "none";
+  }
+}
+
+/* ---- editing sets during a session ---- */
+function sessSet(xi, si, key, val){
+  const se = SESSION.exercises[xi]; if (!se) return;
+  const set = se.sets[si]; if (!set) return;
+  set[key] = val;
+  persistSession();
+}
+/* Ticking a set off is what starts the rest countdown. */
+function sessToggleDone(xi, si){
+  const se = SESSION.exercises[xi]; if (!se) return;
+  const set = se.sets[si]; if (!set) return;
+  set.done = !set.done;
+  if (set.done){
+    const ex = exerciseById(se.exerciseId);
+    const prior = SESSION._priorPR && SESSION._priorPR[se.exerciseId];
+    if (prior){
+      const beat = setBeatsPR(se.exerciseId, set, prior);
+      if (beat) set.pr = beat;
+    }
+    if (set.type !== "warmup") startRest(se.restSec, xi);
+  } else { delete set.pr; }
+  persistSession();
+  navigate("session");
+}
+function sessAddSet(xi){
+  const se = SESSION.exercises[xi];
+  const last = se.sets[se.sets.length-1];
+  const s = blankSet("normal");
+  if (last){ s.kg = last.kg; s.reps = last.reps; s.seconds = last.seconds; s.km = last.km; }
+  se.sets.push(s); persistSession(); navigate("session");
+}
+function sessDelSet(xi, si){
+  const se = SESSION.exercises[xi];
+  se.sets.splice(si,1);
+  if (!se.sets.length) se.sets.push(blankSet("normal"));
+  persistSession(); navigate("session");
+}
+function sessCycleSetType(xi, si){
+  const order = ["normal","warmup","drop","failure"];
+  const set = SESSION.exercises[xi].sets[si];
+  set.type = order[(order.indexOf(set.type)+1) % order.length];
+  persistSession(); navigate("session");
+}
+function sessDelExercise(xi){
+  SESSION.exercises.splice(xi,1); persistSession(); navigate("session");
+}
+function sessMoveExercise(xi, dir){
+  const to = xi + dir;
+  if (to < 0 || to >= SESSION.exercises.length) return;
+  const [e] = SESSION.exercises.splice(xi,1);
+  SESSION.exercises.splice(to,0,e);
+  persistSession(); navigate("session");
+}
+function sessSetRest(xi, secs){
+  SESSION.exercises[xi].restSec = Math.max(0, num(secs));
+  persistSession(); navigate("session");
+}
+/* Group with the exercise above: alternate between them, resting only at the end. */
+function sessToggleSuperset(xi){
+  const se = SESSION.exercises[xi];
+  se.superset = se.superset ? null : (SESSION.exercises[xi-1] ? (SESSION.exercises[xi-1].superset || SESSION.exercises[xi-1].id) : null);
+  persistSession(); navigate("session");
+}
+
+/* ---- finishing ---- */
+function finishSession(){
+  if (!SESSION) return;
+  const done = sessionSetCount(SESSION);
+  if (!done){
+    if (!confirm("No sets are ticked off. Save anyway?")) return;
+  }
+  const dur = sessionElapsed();
+  const date = SESSION.date;
+  const exercises = SESSION.exercises
+    .map(se => ({
+      exerciseId: se.exerciseId, name: se.name, type: se.type,
+      restSec: se.restSec, superset: se.superset || null,
+      sets: se.sets.filter(s=>s.done).map(s => ({
+        kg: s.kg==="" ? null : num(s.kg),
+        reps: s.reps==="" ? null : num(s.reps),
+        seconds: s.seconds==="" ? null : num(s.seconds),
+        km: s.km==="" ? null : num(s.km),
+        type: s.type || "normal", done: true, pr: s.pr || null
+      }))
+    }))
+    .filter(se => se.sets.length);
+
+  const log = {
+    id: SESSION.id, date, source:"gym",
+    name: SESSION.name, routineId: SESSION.routineId,
+    startedAt: SESSION.startedAt, endedAt: Date.now(),
+    durationSec: dur, notes: SESSION.notes || "",
+    exercises,
+    createdAt: Date.now(), updatedAt: Date.now()
+  };
+  log.volumeKg = sessionVolume({ exercises });
+  log.setCount = exercises.reduce((n,e)=>n+e.sets.length,0);
+
+  // Write the day's workout record first: upsertWorkout clears the day, which
+  // includes wiping that date's strength logs. Pushing the session before it
+  // would delete the session we just saved.
+  const type = SESSION.name || "Workout";
+  upsertWorkout(date, {
+    scheduled: suggestedTypeForDate(date), actual: type, category: "Strength",
+    status: "Completed", durationSec: dur, notes: SESSION.notes || ""
+  });
+  const wk = workoutForDate(date);
+  if (wk) log.workoutLogId = wk.id;
+
+  STATE.strengthLogs = STATE.strengthLogs.filter(s => s.id !== log.id);
+  STATE.strengthLogs.push(log);
+
+  SESSION = null; REST = null; stopSessionTick(); persistSession();
+  save(); toast("Workout saved"); navigate("workouts");
+}
+/* Save the shape of what you just did as a reusable routine. */
+function saveSessionAsRoutine(){
+  if (!SESSION) return;
+  const r = newRoutine(SESSION.name || "New routine");
+  r.exercises = SESSION.exercises.map(se => ({
+    id: uid("re"), exerciseId: se.exerciseId, name: se.name, type: se.type,
+    restSec: se.restSec, superset: se.superset || null,
+    sets: se.sets.map(s => ({ targetReps: s.reps, targetKg: s.kg, type: s.type }))
+  }));
+  r.updatedAt = Date.now();
+  save(); toast("Saved as a routine");
+}
+
+/* ---- exercise picker ---- */
+let PICK = { q:"", muscle:"All", target:null };   // target: "routine" | "session"
+function openExercisePicker(target){
+  PICK = { q:"", muscle:"All", target:target };
+  renderExercisePicker();
+}
+function pickerSearch(v){ PICK.q = v; renderExercisePickerList(); }
+function pickerMuscle(m){ PICK.muscle = m; renderExercisePicker(); }
+function renderExercisePicker(){
+  openSheet(`
+    <h3>Add an exercise</h3>
+    <input class="input" id="exQ" type="text" placeholder="Search 190+ exercises…" value="${esc(PICK.q)}"
+           oninput="pickerSearch(this.value)" style="margin-bottom:10px;">
+    <div class="cat-tabs" style="margin:0 -18px 8px;padding-left:18px;padding-right:18px;">
+      ${["All"].concat(MUSCLES).map(m=>`
+        <button class="cat-tab ${PICK.muscle===m?"on":""}" onclick="pickerMuscle('${m}')">${m}</button>`).join("")}
+    </div>
+    <div id="exList"></div>
+    <button class="btn ghost full" style="margin-top:10px;" onclick="openNewExerciseSheet()">＋ Create a new exercise</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Close</button>
+  `);
+  renderExercisePickerList();
+}
+function renderExercisePickerList(){
+  const box = document.getElementById("exList");
+  if (!box) return;
+  const found = searchExercises(PICK.q, PICK.muscle).slice(0, 60);
+  box.innerHTML = found.length
+    ? `<div class="card flush">${found.map(e=>{
+        const last = lastPerformance(e.id);
+        return `<div class="list-item" style="cursor:pointer;" onclick="chooseExercise('${e.id}')">
+          <div class="li-ic">${e.custom?"⭐":"🏋️"}</div>
+          <div class="li-main"><div class="li-title">${esc(e.name)}</div>
+            <div class="li-sub">${esc(e.muscle)} · ${esc(e.equipment)}${last?` · last ${prettyDate(last.date)}`:""}</div></div>
+        </div>`; }).join("")}</div>`
+    : `<div class="empty"><span class="big">🔍</span>Nothing matching “${esc(PICK.q)}”.<br>You can create it below.</div>`;
+}
+function chooseExercise(id){
+  const ex = exerciseById(id); if (!ex) return;
+  if (PICK.target === "routine"){
+    const r = routineById(EDIT_ROUTINE); if (!r) return;
+    r.exercises.push(makeRoutineEntry(ex));
+    r.updatedAt = Date.now(); save(); closeSheet(); navigate("routineEdit");
+  } else {
+    if (!SESSION) return;
+    SESSION.exercises.push({ id:uid("se"), exerciseId:ex.id, name:ex.name, type:ex.type,
+      restSec: defaultRestFor(ex), superset:null, sets:[blankSet("normal")] });
+    cachePriorPRs();
+    persistSession(); closeSheet(); navigate("session");
+  }
+}
+function openNewExerciseSheet(){
+  openSheet(`
+    <h3>New exercise</h3>
+    <label class="field"><span>Name</span><input class="input" id="nx_name" type="text" placeholder="e.g. Landmine Row"></label>
+    <div class="grid2">
+      <label class="field"><span>Muscle group</span>
+        <select class="input" id="nx_muscle">${MUSCLES.concat(["Other"]).map(m=>`<option>${m}</option>`).join("")}</select></label>
+      <label class="field"><span>Equipment</span>
+        <select class="input" id="nx_equip">${["Barbell","Dumbbell","Machine","Cable","Kettlebell","Plate","Bodyweight","Other"].map(m=>`<option>${m}</option>`).join("")}</select></label>
+    </div>
+    <label class="field"><span>What you record</span>
+      <select class="input" id="nx_type">${Object.keys(EX_TYPES).map(k=>`<option value="${k}">${EX_TYPES[k].lab}</option>`).join("")}</select></label>
+    <button class="btn primary full" onclick="saveNewExercise()">Create</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="renderExercisePicker()">Back</button>
+  `);
+}
+function saveNewExercise(){
+  const nm = ($("#nx_name")&&$("#nx_name").value||"").trim();
+  if (!nm){ toast("Give it a name"); return; }
+  const ex = addCustomExercise(nm, $("#nx_muscle").value, $("#nx_equip").value, $("#nx_type").value);
+  if (!ex){ toast("You already have one with that name"); return; }
+  chooseExercise(ex.id);
+}
+
+/* ---- routines ---- */
+let EDIT_ROUTINE = null;
+SCREENS.routines = {
+  title:"Routines",
+  render(){
+    const rs = (STATE.routines||[]).slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+    return `
+      <p class="hint" style="margin:0 2px 14px;">Set a workout up once, then start it whenever you're in the gym.</p>
+      ${sessionActive()?`<div class="card" style="border-color:var(--accent);">
+        <div class="eyebrow">In progress</div>
+        <div class="stat-big" style="margin:6px 0 10px;">${esc(SESSION.name)}</div>
+        <button class="btn primary full" onclick="navigate('session')">Back to workout</button>
+      </div>`:""}
+      <div class="card flush">
+        <div style="padding:14px 16px 6px"><h3 style="margin:0">Your routines</h3></div>
+        ${rs.length ? rs.map(r=>`
+          <div class="list-item">
+            <div class="li-ic">📋</div>
+            <div class="li-main" style="cursor:pointer;" onclick="editRoutine('${r.id}')">
+              <div class="li-title">${esc(r.name)}</div>
+              <div class="li-sub">${routineExerciseCount(r)} exercises · ${routineSetCount(r)} sets</div></div>
+            <div class="li-actions">
+              <button class="btn sm primary" onclick="startSession('${r.id}')">Start</button>
+              <button class="iconbtn" onclick="editRoutine('${r.id}')">✎</button>
+            </div>
+          </div>`).join("")
+          : `<div style="padding:0 16px 12px" class="hint">No routines yet.</div>`}
+        <div style="padding:12px 16px 16px">
+          <button class="btn sm ghost" onclick="createRoutine()">＋ New routine</button>
+        </div>
+      </div>
+      <button class="btn full" onclick="startSession(null)">🏋️ Start an empty workout</button>
+      <button class="btn ghost full" style="margin-top:8px;" onclick="navigate('workouts')">Back</button>
+    `;
+  }
+};
+function createRoutine(){ const r = newRoutine("New routine"); EDIT_ROUTINE = r.id; navigate("routineEdit"); }
+function editRoutine(id){ EDIT_ROUTINE = id; navigate("routineEdit"); }
+function renameRoutine(){
+  const r = routineById(EDIT_ROUTINE); if(!r) return;
+  r.name = ($("#rtName").value||"").trim() || "Routine"; r.updatedAt = Date.now(); save();
+}
+function rtDelEx(i){ const r=routineById(EDIT_ROUTINE); r.exercises.splice(i,1); r.updatedAt=Date.now(); save(); navigate("routineEdit"); }
+function rtMoveEx(i,dir){
+  const r=routineById(EDIT_ROUTINE); const to=i+dir;
+  if (to<0||to>=r.exercises.length) return;
+  const [e]=r.exercises.splice(i,1); r.exercises.splice(to,0,e);
+  r.updatedAt=Date.now(); save(); navigate("routineEdit");
+}
+function rtAddSet(i){ const r=routineById(EDIT_ROUTINE); r.exercises[i].sets.push(blankTargetSet()); r.updatedAt=Date.now(); save(); navigate("routineEdit"); }
+function rtDelSet(i,si){
+  const r=routineById(EDIT_ROUTINE); r.exercises[i].sets.splice(si,1);
+  if(!r.exercises[i].sets.length) r.exercises[i].sets.push(blankTargetSet());
+  r.updatedAt=Date.now(); save(); navigate("routineEdit");
+}
+function rtSet(i,si,key,val){ const r=routineById(EDIT_ROUTINE); r.exercises[i].sets[si][key]=val; r.updatedAt=Date.now(); save(); }
+function rtRest(i,val){ const r=routineById(EDIT_ROUTINE); r.exercises[i].restSec=Math.max(0,num(val)); r.updatedAt=Date.now(); save(); }
+SCREENS.routineEdit = {
+  title:"Edit routine",
+  render(){
+    const r = routineById(EDIT_ROUTINE);
+    if (!r) return `<div class="empty"><span class="big">📋</span>Routine not found.</div>
+      <button class="btn ghost full" onclick="navigate('routines')">Back</button>`;
+    return `
+      <div class="card">
+        <label class="field" style="margin:0"><span>Routine name</span>
+          <input class="input" id="rtName" type="text" value="${esc(r.name)}" onchange="renameRoutine()"></label>
+      </div>
+      ${r.exercises.map((e,i)=>{
+        const ex = exerciseById(e.exerciseId) || { type:e.type, name:e.name };
+        const f = exFields(ex);
+        return `<div class="card">
+          <div class="row spread" style="align-items:flex-start;">
+            <div style="min-width:0;">
+              <div class="li-title">${esc(e.name)}</div>
+              <div class="li-sub muted">${esc((exerciseById(e.exerciseId)||{}).muscle||"")} · ${EX_TYPES[exType(ex)].lab}</div>
+            </div>
+            <div class="li-actions">
+              <button class="iconbtn" onclick="rtMoveEx(${i},-1)">↑</button>
+              <button class="iconbtn" onclick="rtMoveEx(${i},1)">↓</button>
+              <button class="iconbtn" onclick="rtDelEx(${i})">🗑️</button>
+            </div>
+          </div>
+          <div class="tt-row"><span class="tt-lab">Rest between sets</span>
+            <span><input type="number" min="0" step="15" value="${numVal(e.restSec,0)}" onchange="rtRest(${i},this.value)"> sec</span></div>
+          <table class="set-table" style="margin-top:8px;"><thead><tr>
+            <th>Set</th>${f.indexOf("kg")>=0?"<th>kg</th>":""}${f.indexOf("reps")>=0?"<th>reps</th>":""}
+            ${f.indexOf("seconds")>=0?"<th>sec</th>":""}${f.indexOf("km")>=0?"<th>km</th>":""}<th></th>
+          </tr></thead><tbody>
+            ${e.sets.map((s,si)=>`<tr>
+              <td class="setn">${si+1}</td>
+              ${f.indexOf("kg")>=0?`<td><input type="number" step="0.5" inputmode="decimal" value="${esc(s.targetKg)}" onchange="rtSet(${i},${si},'targetKg',this.value)"></td>`:""}
+              ${f.indexOf("reps")>=0?`<td><input type="number" step="1" inputmode="numeric" value="${esc(s.targetReps)}" onchange="rtSet(${i},${si},'targetReps',this.value)"></td>`:""}
+              ${f.indexOf("seconds")>=0?`<td><input type="number" step="5" inputmode="numeric" value="${esc(s.targetReps)}" onchange="rtSet(${i},${si},'targetReps',this.value)"></td>`:""}
+              ${f.indexOf("km")>=0?`<td><input type="number" step="0.1" inputmode="decimal" value="${esc(s.targetKg)}" onchange="rtSet(${i},${si},'targetKg',this.value)"></td>`:""}
+              <td><button class="del-set" onclick="rtDelSet(${i},${si})">×</button></td>
+            </tr>`).join("")}
+          </tbody></table>
+          <button class="btn tiny ghost" style="margin-top:8px" onclick="rtAddSet(${i})">＋ Add set</button>
+        </div>`;
+      }).join("")}
+      <button class="btn full" onclick="openExercisePicker('routine')">＋ Add exercise</button>
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="btn primary" onclick="startSession('${r.id}')">Start this workout</button>
+        <button class="btn ghost" onclick="navigate('routines')">Done</button>
+      </div>
+      <button class="btn full bad ghost" style="margin-top:10px;" onclick="deleteRoutine('${r.id}')">Delete routine</button>
+    `;
+  }
+};
+
+/* ---- the live session screen ---- */
+function cachePriorPRs(){
+  if (!SESSION) return;
+  SESSION._priorPR = SESSION._priorPR || {};
+  SESSION.exercises.forEach(se => {
+    if (!SESSION._priorPR[se.exerciseId]) SESSION._priorPR[se.exerciseId] = exercisePR(se.exerciseId);
+  });
+}
+SCREENS.session = {
+  title:"Workout",
+  mount(){ startSessionTick(); renderSessionTimers(); },
+  render(){
+    if (!SESSION) return `<div class="empty"><span class="big">🏋️</span>No workout running.</div>
+      <button class="btn primary full" onclick="navigate('routines')">Start one</button>`;
+    cachePriorPRs();
+    const vol = sessionVolume(SESSION), sets = sessionSetCount(SESSION);
+    return `
+      <div class="card" style="position:sticky;top:64px;z-index:20;">
+        <div class="row spread" style="align-items:baseline;">
+          <div>
+            <div class="eyebrow">${esc(SESSION.name)}${SESSION.date!==todayISO()?` · ${esc(prettyDate(SESSION.date))}`:""}</div>
+            <div class="stat-big" id="sessClock" style="margin-top:4px;">${mmss(sessionElapsed())}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="hint">${sets} sets · ${fmt(vol,0)} kg</div>
+            <div class="btn-row" style="margin-top:8px;">
+              <button class="btn sm ghost" onclick="pauseSession()">${SESSION.pausedAt?"Resume":"Pause"}</button>
+              <button class="btn sm primary" onclick="finishSession()">Finish</button>
+            </div>
+          </div>
+        </div>
+        <div id="restBar" style="display:${restRunning()?"":"none"};margin-top:12px;">
+          <div class="row spread" style="margin-bottom:5px;">
+            <span class="eyebrow">Rest</span>
+            <span class="stat-big" id="restNum" style="font-size:1.3rem;">${mmss(restRemaining())}</span>
+          </div>
+          <div class="bar"><i id="restFill" style="width:0%;background:var(--accent);"></i></div>
+          <div class="row wrap" style="gap:6px;margin-top:8px;">
+            <button class="btn tiny ghost" onclick="adjustRest(-15)">−15s</button>
+            <button class="btn tiny ghost" onclick="adjustRest(15)">+15s</button>
+            <button class="btn tiny ghost" onclick="skipRest()">Skip</button>
+          </div>
+        </div>
+      </div>
+
+      ${SESSION.exercises.map((se,xi)=>sessionExerciseCard(se,xi)).join("")}
+
+      <button class="btn full" onclick="openExercisePicker('session')">＋ Add exercise</button>
+      <label class="field" style="margin-top:14px;"><span>Session notes</span>
+        <textarea class="input" rows="2" onchange="SESSION.notes=this.value;persistSession()">${esc(SESSION.notes||"")}</textarea></label>
+      <div class="btn-row" style="margin-top:6px;">
+        <button class="btn ghost" onclick="saveSessionAsRoutine()">Save as routine</button>
+        <button class="btn ghost bad" onclick="discardSession()">Discard</button>
+      </div>
+    `;
+  }
+};
+function sessionExerciseCard(se, xi){
+  const ex = exerciseById(se.exerciseId) || { type:se.type, name:se.name, muscle:"" };
+  const f = exFields(ex);
+  const prev = lastPerformance(se.exerciseId, SESSION.date);
+  const pr = (SESSION._priorPR && SESSION._priorPR[se.exerciseId]) || { weight:0, oneRM:0 };
+  const rows = se.sets.map((s,si)=>{
+    const p = prev && prev.sets[si];
+    const prevTxt = p ? `${p.kg!=null?fmt(p.kg)+"kg":""}${p.reps!=null?"×"+fmt(p.reps,0):""}${p.seconds!=null?fmt(p.seconds,0)+"s":""}` : "–";
+    const tag = SET_TYPES[s.type] ? SET_TYPES[s.type].tag : "";
+    return `<tr${s.done?' style="opacity:.72"':""}>
+      <td class="setn"><button class="btn tiny ghost" style="min-width:26px;padding:0 4px;" onclick="sessCycleSetType(${xi},${si})">${tag||(si+1)}</button></td>
+      <td class="prev">${esc(prevTxt)}</td>
+      ${f.indexOf("kg")>=0?`<td><input type="number" step="0.5" inputmode="decimal" value="${esc(s.kg)}" onchange="sessSet(${xi},${si},'kg',this.value)"></td>`:""}
+      ${f.indexOf("reps")>=0?`<td><input type="number" step="1" inputmode="numeric" value="${esc(s.reps)}" onchange="sessSet(${xi},${si},'reps',this.value)"></td>`:""}
+      ${f.indexOf("seconds")>=0?`<td><input type="number" step="5" inputmode="numeric" value="${esc(s.seconds)}" onchange="sessSet(${xi},${si},'seconds',this.value)"></td>`:""}
+      ${f.indexOf("km")>=0?`<td><input type="number" step="0.1" inputmode="decimal" value="${esc(s.km)}" onchange="sessSet(${xi},${si},'km',this.value)"></td>`:""}
+      <td class="donecell"><button class="setdone ${s.done?"on":""}" onclick="sessToggleDone(${xi},${si})">${s.done?"✓":""}</button></td>
+      <td><button class="del-set" onclick="sessDelSet(${xi},${si})">×</button></td>
+    </tr>`;
+  }).join("");
+  const hitPR = se.sets.some(s=>s.done && s.pr);
+  return `<div class="card">
+    <div class="row spread" style="align-items:flex-start;">
+      <div style="min-width:0;cursor:pointer;" onclick="openExerciseDetail('${se.exerciseId}')">
+        <div class="li-title">${esc(se.name)} ${hitPR?'<span class="pill good">PR</span>':""}</div>
+        <div class="li-sub muted">${esc(ex.muscle||"")}${pr.weight?` · best ${fmt(pr.weight)}kg`:""}${se.superset?" · superset":""}</div>
+      </div>
+      <div class="li-actions">
+        <button class="iconbtn" onclick="sessMoveExercise(${xi},-1)">↑</button>
+        <button class="iconbtn" onclick="sessMoveExercise(${xi},1)">↓</button>
+        <button class="iconbtn" onclick="sessDelExercise(${xi})">🗑️</button>
+      </div>
+    </div>
+    <div class="row wrap" style="gap:6px;margin:8px 0 4px;">
+      <span class="hint">Rest</span>
+      ${[60,90,120,180].map(v=>`<button class="btn tiny ${se.restSec===v?"primary":"ghost"}" onclick="sessSetRest(${xi},${v})">${v<120?v+"s":(v/60)+"m"}</button>`).join("")}
+      <button class="btn tiny ghost" onclick="startRest(${se.restSec},${xi});navigate('session')">Start rest</button>
+      ${xi>0?`<button class="btn tiny ghost" onclick="sessToggleSuperset(${xi})">${se.superset?"Ungroup":"Superset"}</button>`:""}
+    </div>
+    <table class="set-table"><thead><tr>
+      <th>Set</th><th>Prev</th>
+      ${f.indexOf("kg")>=0?"<th>kg</th>":""}${f.indexOf("reps")>=0?"<th>reps</th>":""}
+      ${f.indexOf("seconds")>=0?"<th>sec</th>":""}${f.indexOf("km")>=0?"<th>km</th>":""}
+      <th>✓</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div class="row wrap" style="gap:8px;margin-top:8px;">
+      <button class="btn tiny ghost" onclick="sessAddSet(${xi})">＋ Add set</button>
+      ${f.indexOf("kg")>=0?`<button class="btn tiny ghost" onclick="openPlateCalc(${xi})">Plates</button>`:""}
+    </div>
+  </div>`;
+}
+
+/* ---- exercise detail: history and bests ---- */
+function openExerciseDetail(id){
+  const ex = exerciseById(id);
+  if (!ex){ toast("Unknown exercise"); return; }
+  const pr = exercisePR(id), hist = exerciseHistory(id).slice(0,8);
+  openSheet(`
+    <h3>${esc(ex.name)}</h3>
+    <p class="hint" style="margin:-4px 0 12px;">${esc(ex.muscle)} · ${esc(ex.equipment)} · ${EX_TYPES[exType(ex)].lab}</p>
+    <div class="metric-grid" style="margin-bottom:12px;">
+      <div class="metric"><div class="m-lab">Heaviest</div><div class="m-val">${pr.weight?fmt(pr.weight)+" kg":"–"}</div>
+        ${pr.reps?`<div class="m-chg flat">×${fmt(pr.reps,0)}</div>`:""}</div>
+      <div class="metric"><div class="m-lab">Est. 1RM</div><div class="m-val">${pr.oneRM?fmt(pr.oneRM)+" kg":"–"}</div></div>
+      <div class="metric"><div class="m-lab">Best session</div><div class="m-val">${pr.volume?fmt(pr.volume,0):"–"}</div>
+        <div class="m-unit">kg volume</div></div>
+      <div class="metric"><div class="m-lab">Times done</div><div class="m-val">${exerciseHistory(id).length}</div></div>
+    </div>
+    ${hist.length?`<div class="eyebrow" style="margin-bottom:4px;">Recent sessions</div>
+      <div class="card flush">${hist.map(h=>`
+        <div class="list-item">
+          <div class="li-main"><div class="li-title">${prettyDate(h.date)}</div>
+            <div class="li-sub">${h.sets.map(s=>`${s.kg!=null?fmt(s.kg):""}${s.reps!=null?"×"+fmt(s.reps,0):""}${s.seconds!=null?fmt(s.seconds,0)+"s":""}`).join("  ")}</div></div>
+        </div>`).join("")}</div>`
+      :`<div class="empty"><span class="big">📈</span>No history yet — it builds as you log.</div>`}
+    <button class="btn ghost full" style="margin-top:12px;" onclick="closeSheet()">Close</button>
+  `);
+}
+
+/* ---- plate calculator ---- */
+function openPlateCalc(xi){
+  const se = SESSION && SESSION.exercises[xi];
+  const guess = se ? num((se.sets.find(s=>s.kg) || {}).kg) : 0;
+  openSheet(`
+    <h3>Plate calculator</h3>
+    <p class="hint" style="margin-bottom:12px;">What to load on each side, heaviest first.</p>
+    <div class="grid2">
+      <label class="field"><span>Total weight (kg)</span>
+        <input class="input" id="pcTotal" type="number" step="0.5" inputmode="decimal" value="${guess?numVal(guess,1):""}" oninput="renderPlateResult()"></label>
+      <label class="field"><span>Bar (kg)</span>
+        <input class="input" id="pcBar" type="number" step="0.5" inputmode="decimal" value="20" oninput="renderPlateResult()"></label>
+    </div>
+    <div id="pcOut"></div>
+    <button class="btn ghost full" style="margin-top:12px;" onclick="closeSheet()">Close</button>
+  `);
+  renderPlateResult();
+}
+function renderPlateResult(){
+  const out = document.getElementById("pcOut");
+  if (!out) return;
+  const total = num($("#pcTotal") && $("#pcTotal").value);
+  const bar = num($("#pcBar") && $("#pcBar").value, 20);
+  if (!(total > 0)){ out.innerHTML = `<p class="hint">Enter a weight.</p>`; return; }
+  const r = platesFor(total, bar);
+  if (!r.perSide.length){
+    out.innerHTML = `<div class="card" style="background:var(--card-2);"><p class="hint" style="margin:0;">${
+      total <= bar ? "That's the bar on its own." : "Nothing to add."}</p></div>`;
+    return;
+  }
+  const counts = {};
+  r.perSide.forEach(p => { counts[p] = (counts[p]||0) + 1; });
+  out.innerHTML = `<div class="card" style="background:var(--card-2);">
+    <div class="eyebrow" style="margin-bottom:8px;">Each side</div>
+    <div class="chips">${Object.keys(counts).sort((a,b)=>b-a).map(p=>
+      `<span class="chip">${counts[p]} × ${p}kg</span>`).join("")}</div>
+    ${!r.ok?`<p class="hint" style="margin-top:9px;">${fmt(r.remainder)} kg per side can't be made with standard plates.</p>`:""}
+  </div>`;
+}
+
+/* =====================================================================
    BOOT
    ===================================================================== */
 (async function boot(){
@@ -5126,7 +6116,8 @@ function applyScaleImport(mode){
   catch(e){ console.warn("Load failed, using defaults", e); STATE = defaultState(); }
   if (backfillMissedWorkouts()) save();          // auto-log any past unlogged days
   applySettings();
-  navigate("home");
+  loadSession();                                 // pick up a workout left running
+  navigate(sessionActive() ? "session" : "home");
 })();
 
 </script>
