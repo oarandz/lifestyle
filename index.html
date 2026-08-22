@@ -549,7 +549,7 @@ textarea.input{ min-height:64px; resize:vertical; }
 </div>
 
 <script>
-const APP_BUILD = "2026-08-26-gym2";   // shown in Settings, so you can tell which build is live
+const APP_BUILD = "2026-08-27-runs";   // shown in Settings, so you can tell which build is live
 
 /* =====================================================================
    DAILY — single-file health tracker (index.html + Supabase)
@@ -602,6 +602,7 @@ const SB_TABLES = [
   { key:"bodyCompositionLogs", table:"body_logs" },
   { key:"brushingLogs",        table:"brushing_logs" },
   { key:"groomingLogs",        table:"grooming_logs" },
+  { key:"runLogs",             table:"run_logs" },
   { key:"routines",            table:"routines" },
   { key:"customExercises",     table:"exercises" },
   { key:"drinkDatabase",       table:"drinks" }
@@ -936,7 +937,7 @@ function reconcileState(local, remote){
 /* A state with no logged data at all (used to avoid a first-sync wipe). */
 function isEmptyState(s){
   if (!s) return true;
-  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs","routines"];
+  const arrs = ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs","runLogs","routines"];
   return arrs.every(k => !Array.isArray(s[k]) || s[k].length === 0);
 }
 
@@ -1202,6 +1203,7 @@ function defaultState(){
     settings: defaultSettings(),
     workoutLogs: [],         // run + strength session records (one per logged workout)
     strengthLogs: [],        // detailed gym sessions, linked by workoutLogId
+    runLogs: [],             // runs and cardio logged from a screenshot
     routines: [],            // saved workout templates
     customExercises: [],     // exercises you've added yourself
     hydrationLogs: [],       // individual drink entries
@@ -1288,7 +1290,7 @@ function mergeDefaults(s){
   s.settings.nutritionTargets = Object.assign({}, d.settings.nutritionTargets, (s.settings.nutritionTargets)||{});
   s.settings.units = Object.assign({}, d.settings.units, (s.settings.units)||{});
   s.settings.groomingIntervals = Object.assign({}, d.settings.groomingIntervals, (s.settings.groomingIntervals)||{});
-  ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs","routines","customExercises","drinkDatabase"]
+  ["workoutLogs","strengthLogs","hydrationLogs","nutritionLogs","bodyCompositionLogs","brushingLogs","foodLogs","meals","groomingLogs","runLogs","routines","customExercises","drinkDatabase"]
     .forEach(k => { if(!Array.isArray(s[k])) s[k] = d[k]; });
   if (!s.drinkDatabase.length) s.drinkDatabase = d.drinkDatabase;
   upgradeDrinkDatabase(s, d);
@@ -1551,8 +1553,10 @@ function homeMetas(){
   const hydrationPct = Math.round(clamp(hy.effective/STATE.settings.hydrationGoalMl*100,0,999));
   // workout: whatever's logged today, or a session running right now
   const wk = workoutForDate(t);
+  const todayRuns = (typeof runsForDate === "function") ? runsForDate(t) : [];
   const running = (typeof sessionActive === "function") && sessionActive();
   const todayWorkoutShort = running ? "Now"
+      : todayRuns.length ? "Run"
       : wk ? (wk.status==="Rest Day" ? "Rest" : wk.status==="Missed" ? "Missed" : "Done")
       : "–";
   // nutrition
@@ -1563,7 +1567,7 @@ function homeMetas(){
   const bm = getBrushing(t,"morning"), be = getBrushing(t,"evening");
   const brushDots = (bm&&bm.done?"●":"○")+(be&&be.done?"●":"○");
   const teethPct = (bm&&bm.done?50:0) + (be&&be.done?50:0);
-  const movePct = running ? 50 : wk ? (wk.status==="Missed" ? 0 : 100) : 0;
+  const movePct = running ? 50 : (todayRuns.length || (wk && wk.status!=="Missed")) ? 100 : 0;
   const moveVal = todayWorkoutShort;
 
   return {
@@ -1571,6 +1575,7 @@ function homeMetas(){
     hydrationMeta: `${fmt(hy.effective,0)} / ${STATE.settings.hydrationGoalMl} ml`,
     todayWorkoutShort,
     workoutMeta: running ? "Workout in progress"
+      : todayRuns.length ? (todayRuns[0].activity + (todayRuns[0].distanceKm?` · ${fmt(todayRuns[0].distanceKm,2)} km`:""))
       : wk ? (workoutLabel(wk) + (wk.durationSec?` · ${mmss(wk.durationSec)}`:""))
       : "Nothing logged today",
     nutritionMeta: (nut || drinkSugarKcal(t)>0) ? `${fmt(totalCaloriesFor(t),0)} kcal today` : "Not logged today",
@@ -1642,11 +1647,18 @@ function workoutMinutes(days){
   STATE.workoutLogs.forEach(l => {
     if (l.date >= cutoff && l.status !== "Missed" && l.status !== "Rest Day") sec += num(l.durationSec);
   });
+  (STATE.runLogs||[]).forEach(r => { if (r.date >= cutoff) sec += num(r.durationSec); });
   return Math.round(sec/60);
 }
 function workoutsInWindow(days){
   const cutoff = addDays(todayISO(), -(days-1));
-  return STATE.workoutLogs.filter(l => l.date >= cutoff && l.status !== "Missed" && l.status !== "Rest Day").length;
+  const n = STATE.workoutLogs.filter(l => l.date >= cutoff && l.status !== "Missed" && l.status !== "Rest Day").length;
+  return n + (STATE.runLogs||[]).filter(r => r.date >= cutoff).length;
+}
+/* Total distance run in a window. */
+function runDistance(days){
+  const cutoff = addDays(todayISO(), -(days-1));
+  return round((STATE.runLogs||[]).reduce((k,r)=> r.date>=cutoff ? k+num(r.distanceKm) : k, 0), 2);
 }
 
 SCREENS.workouts = {
@@ -1672,12 +1684,14 @@ SCREENS.workouts = {
         </div>
         <div class="btn-row" style="margin-top:14px;">
           <button class="btn primary" onclick="navigate('routines')">🏋️ Start a workout</button>
+          <button class="btn" onclick="openRunImportSheet()">🏃 Log a run</button>
           ${today?`<button class="btn ghost bad" onclick="undoWorkout('${t}')">Clear</button>`
                  :`<button class="btn ghost" onclick="markRest('${t}')">😴 Rest day</button>`}
         </div>
       </div>`}
 
       ${trainingSummaryCard()}
+      ${runsCard()}
       ${pastDaysCard()}
       ${recentWorkoutsCard()}
 
@@ -1685,6 +1699,7 @@ SCREENS.workouts = {
         <button class="btn" onclick="navigate('routines')">📋 Routines</button>
         <button class="btn ghost" onclick="openBackdateSheet()">🗓️ Log another day</button>
       </div>
+      <button class="btn ghost full" style="margin-bottom:14px" onclick="openRunImportSheet()">🏃 Log a run from a screenshot</button>
     `;
   }
 };
@@ -1701,6 +1716,7 @@ function trainingSummaryCard(){
       <div class="metric"><div class="m-lab">Workouts</div><div class="m-val">${week}</div></div>
       <div class="metric"><div class="m-lab">Time</div><div class="m-val">${mins}</div><div class="m-unit">minutes</div></div>
       <div class="metric"><div class="m-lab">Volume</div><div class="m-val">${fmt(vol,0)}</div><div class="m-unit">kg lifted</div></div>
+      <div class="metric"><div class="m-lab">Distance</div><div class="m-val">${fmt(runDistance(7),1)}</div><div class="m-unit">km run</div></div>
       <div class="metric"><div class="m-lab">Last 28 days</div><div class="m-val">${month}</div><div class="m-unit">workouts</div></div>
     </div>
   </div>`;
@@ -1714,13 +1730,18 @@ function pastDaysCard(){
     <div style="padding:14px 16px 6px"><h3 style="margin:0">Fill in a past day</h3></div>
     ${days.map(d=>{
       const log = workoutForDate(d);
-      const status = log ? workoutLabel(log) : "Nothing logged";
-      const cls = !log ? "neutral" : log.status==="Missed" ? "bad" : log.status==="Rest Day" ? "neutral" : "good";
+      const runs = runsForDate(d);
+      const parts = [];
+      if (log) parts.push(workoutLabel(log) + (log.durationSec?` · ${mmss(log.durationSec)}`:""));
+      runs.forEach(r => parts.push(`${r.activity}${r.distanceKm?` · ${fmt(r.distanceKm,2)} km`:""}`));
+      const status = parts.length ? parts.join(" + ") : "Nothing logged";
+      const has = !!log || runs.length>0;
+      const cls = !has ? "neutral" : (log && log.status==="Missed") ? "bad" : (log && log.status==="Rest Day") ? "neutral" : "good";
       return `<div class="list-item" style="cursor:pointer;" onclick="startWorkoutFor('${d}')">
-        <div class="li-ic">${workoutIcon(log)}</div>
+        <div class="li-ic">${runs.length&&!log ? "🏃" : workoutIcon(log)}</div>
         <div class="li-main"><div class="li-title">${prettyDate(d)}</div>
-          <div class="li-sub">${esc(status)}${log&&log.durationSec?` · ${mmss(log.durationSec)}`:""}</div></div>
-        <div class="li-actions"><span class="pill ${cls}">${!log?"Add":"Change"}</span></div>
+          <div class="li-sub">${esc(status)}</div></div>
+        <div class="li-actions"><span class="pill ${cls}">${!has?"Add":"Change"}</span></div>
       </div>`;
     }).join("")}
     <div style="padding:10px 16px 16px">
@@ -1751,6 +1772,7 @@ function startWorkoutFor(date){
     <h3>${prettyDate(date)}</h3>
     ${existing?`<p class="hint" style="margin-bottom:12px;">Currently: ${esc(workoutLabel(existing))}. Starting a new session replaces it.</p>`:""}
     <button class="btn primary full" onclick="closeSheet();startSessionFor('${date}')">🏋️ Log a workout</button>
+    <button class="btn full" style="margin-top:8px;" onclick="closeSheet();openRunImportSheet()">🏃 Log a run from a screenshot</button>
     <button class="btn ghost full" style="margin-top:8px;" onclick="markRest('${date}')">😴 Rest day</button>
     ${existing?`<button class="btn ghost full bad" style="margin-top:8px;" onclick="closeSheet();undoWorkout('${date}')">Clear this day</button>`:""}
     <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
@@ -2848,13 +2870,35 @@ function trendCharts(){
           if (st.km!=null && num(st.km)>0){ km += num(st.km); found = true; }
         }));
       });
+      (STATE.runLogs||[]).forEach(r => {
+        if (r.date===d && num(r.distanceKm)>0){ km += num(r.distanceKm); found = true; }
+      });
       const legacy = completed(d);
       if (legacy && isLegacyRun(legacy) && num(legacy.actualDistance)>0){ km += num(legacy.actualDistance); found = true; }
       return found ? round(km,2) : null;
     };
     if (dates.some(d=>distFor(d)!=null)){
-      html += buildChart(`Distance covered (${U})`,"cardio logged in sessions", dates.map(shortDate),
+      html += buildChart(`Distance covered (${U})`,"runs and cardio", dates.map(shortDate),
         [{name:"Distance",color:"var(--hydration)",type:"line",values:daily(dates,distFor)}]);
+    }
+    /* Pace and heart rate come off the run screenshots. */
+    const paceFor = d => {
+      const rs = (STATE.runLogs||[]).filter(r=>r.date===d && derivedPace(r)>0);
+      if (!rs.length) return null;
+      return Math.round(rs.reduce((a,r)=>a+derivedPace(r),0)/rs.length);
+    };
+    if (dates.some(d=>paceFor(d)!=null)){
+      html += buildChart("Average pace (seconds per km)","lower is faster", dates.map(shortDate),
+        [{name:"Pace",color:"#ff9f0a",type:"line",values:daily(dates,paceFor)}], {integer:true});
+      const hrFor = d => {
+        const rs = (STATE.runLogs||[]).filter(r=>r.date===d && num(r.avgHeartRate)>0);
+        if (!rs.length) return null;
+        return Math.round(rs.reduce((a,r)=>a+num(r.avgHeartRate),0)/rs.length);
+      };
+      if (dates.some(d=>hrFor(d)!=null)){
+        html += buildChart("Average heart rate on runs (bpm)","", dates.map(shortDate),
+          [{name:"Heart rate",color:"var(--bad)",type:"line",values:daily(dates,hrFor)}], {integer:true});
+      }
     }
 
     // gym volume: total kg shifted per session
@@ -3033,6 +3077,7 @@ const EXPORT_CATS = [
   { key:"workouts",  lab:"Workouts",         rows:()=>STATE.workoutLogs,         json:()=>STATE.workoutLogs },
   { key:"strength",  lab:"Gym sets",          rows:()=>strengthRows(),            json:()=>STATE.strengthLogs },
   { key:"routines",  lab:"Routines",          rows:()=>routineRows(),             json:()=>STATE.routines },
+  { key:"runs",      lab:"Runs",              rows:()=>STATE.runLogs||[],         json:()=>STATE.runLogs },
   { key:"hydration", lab:"Hydration",         rows:()=>STATE.hydrationLogs,       json:()=>STATE.hydrationLogs },
   { key:"drinks",    lab:"Drink database",    rows:()=>STATE.drinkDatabase,       json:()=>STATE.drinkDatabase },
   { key:"nutrition", lab:"Nutrition",         rows:()=>STATE.nutritionLogs,       json:()=>STATE.nutritionLogs },
@@ -5760,6 +5805,340 @@ function renderPlateResult(){
     <div class="chips">${Object.keys(counts).sort((a,b)=>b-a).map(p=>
       `<span class="chip">${counts[p]} × ${p}kg</span>`).join("")}</div>
     ${!r.ok?`<p class="hint" style="margin-top:9px;">${fmt(r.remainder)} kg per side can't be made with standard plates.</p>`:""}
+  </div>`;
+}
+
+
+/* =====================================================================
+   SECTION 13 — RUNS  (logged after the fact from a workout screenshot)
+   Runs live in their own collection rather than the day record, because
+   the day record holds one workout and you can do two runs in a day —
+   or a run and a gym session.
+   ===================================================================== */
+const RUN_FN = "parse-workout";
+let RUN_IMPORT = null;      // parsed screenshot awaiting review
+let RUN_PHOTO = null;
+
+function runsForDate(d){ return (STATE.runLogs||[]).filter(r=>r.date===d).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)); }
+function allRuns(){ return (STATE.runLogs||[]).slice().sort(byDateDesc); }
+function deleteRun(id){
+  STATE.runLogs = STATE.runLogs.filter(r=>r.id!==id);
+  save(); toast("Run deleted"); navigate("workouts");
+}
+/* Anything logged that day, from either collection. */
+function dayHasTraining(d){
+  const w = workoutForDate(d);
+  return !!(w && w.status!=="Missed") || runsForDate(d).length > 0;
+}
+
+/* ---- formatting ---- */
+function paceText(secPerKm){
+  const s = num(secPerKm);
+  if (!(s>0)) return "–";
+  const m = Math.floor(s/60), r = Math.round(s%60);
+  return `${m}'${String(r).padStart(2,"0")}"/km`;
+}
+function hms(sec){
+  const s = Math.max(0, Math.round(num(sec)));
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), r = s%60;
+  return h ? `${h}:${String(m).padStart(2,"0")}:${String(r).padStart(2,"0")}` : `${m}:${String(r).padStart(2,"0")}`;
+}
+/* Pace we can work out ourselves when the screenshot didn't show it. */
+function derivedPace(run){
+  if (num(run.avgPaceSecPerKm) > 0) return num(run.avgPaceSecPerKm);
+  if (num(run.distanceKm) > 0 && num(run.durationSec) > 0) return num(run.durationSec) / num(run.distanceKm);
+  return 0;
+}
+
+/* ---- date handling ------------------------------------------------------
+   Screenshots print "Wed 19 Aug" with no year. Resolve to the most recent
+   date that matches and isn't in the future. */
+const MONTHS = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+function parseScreenshotDate(str, yearHint){
+  const raw = String(str||"").trim();
+  if (!raw) return null;
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return raw;
+  /* "Wed 19 Aug" leads with a weekday, so find the month name first and take
+     the day from the numbers around it rather than trusting word order. */
+  const low = raw.toLowerCase().replace(/[,]/g, " ");
+  let mon = -1;
+  for (let i=0; i<12; i++){ if (low.indexOf(MONTHS[i]) >= 0){ mon = i; break; } }
+  if (mon < 0) return null;
+  let day = null, printedYear = null;
+  (low.match(/\d{1,4}/g) || []).forEach(n => {
+    const v = parseInt(n, 10);
+    if (n.length === 4) printedYear = v;
+    else if (day === null && v >= 1 && v <= 31) day = v;
+  });
+  if (day === null) return null;
+  const today = todayISO();
+  const thisYear = parseInt(today.slice(0,4), 10);
+  const hint = yearHint || printedYear;
+  const years = hint ? [num(hint)] : [thisYear, thisYear-1];
+  for (let i=0; i<years.length; i++){
+    const cand = `${years[i]}-${String(mon+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    if (cand <= today) return cand;
+  }
+  return `${thisYear-1}-${String(mon+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+}
+
+/* ---- the import flow ---- */
+function openRunImportSheet(err){
+  if (!aiAvailable()){
+    openSheet(`<h3>Log a run from a screenshot</h3>
+      <p class="hint" style="margin-bottom:12px;">This needs the cloud connection — sign in under Settings → Cloud sync.</p>
+      <button class="btn ghost full" onclick="closeSheet()">Close</button>`);
+    return;
+  }
+  openSheet(`
+    <h3>Log a run from a screenshot</h3>
+    <p class="hint" style="margin:-4px 0 12px;">Share a workout from Apple Fitness (or Strava, Garmin, Nike Run Club) and pick the screenshot — everything on it gets read in, including the date.</p>
+    <input type="file" id="runPhotoCam" accept="image/*" capture="environment" class="file-hidden" onchange="onRunPhoto(this)">
+    <input type="file" id="runPhotoLib" accept="image/*" class="file-hidden" onchange="onRunPhoto(this)">
+    ${RUN_PHOTO
+      ? `<img src="${RUN_PHOTO.preview}" alt="" style="width:100%;max-height:260px;object-fit:contain;border-radius:14px;margin-bottom:10px;background:var(--card-2);">
+         <div class="row wrap" style="gap:8px;margin-bottom:12px;">
+           <label class="btn sm ghost" for="runPhotoLib">🖼️ Choose another</label>
+           <button class="btn sm ghost" onclick="RUN_PHOTO=null;openRunImportSheet()">Remove</button>
+         </div>`
+      : `<div class="btn-row" style="margin-bottom:12px;">
+           <label class="btn" for="runPhotoLib">🖼️ From library</label>
+           <label class="btn" for="runPhotoCam">📷 Take a photo</label>
+         </div>`}
+    ${err?`<div class="warnbox">${esc(err)}</div>`:""}
+    <button class="btn primary full" onclick="runReadScreenshot()">Read the screenshot</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>
+  `);
+}
+async function onRunPhoto(input){
+  const file = input.files && input.files[0];
+  input.value = "";
+  if (!file) return;
+  try { RUN_PHOTO = await shrinkImage(file); openRunImportSheet(); }
+  catch(e){ openRunImportSheet(e.message || "Couldn't use that image"); }
+}
+async function runReadScreenshot(){
+  if (!RUN_PHOTO){ toast("Pick a screenshot first"); return; }
+  openSheet(`<h3>Reading it…</h3>
+    <div class="empty"><span class="big">🏃</span>Transcribing the numbers off your screenshot.<br>Usually a few seconds.</div>`);
+  try {
+    const raw = await requestWorkoutParse(RUN_PHOTO);
+    RUN_IMPORT = normaliseRun(raw);
+    openRunReview();
+  } catch(e){ openRunImportSheet(e.message || String(e)); }
+}
+async function requestWorkoutParse(photo){
+  if (!sbSignedIn()) await sbAutoSignIn();
+  if (!sbSignedIn()) throw new Error("Sign in under Settings → Cloud sync first");
+  const ctl = (typeof AbortController!=="undefined") ? new AbortController() : null;
+  const tm = ctl ? setTimeout(()=>ctl.abort(), 60000) : null;
+  let res;
+  try {
+    res = await fetch(`${sbUrl()}/functions/v1/${RUN_FN}`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "apikey": sbKey(),
+                "Authorization":"Bearer " + SB_SESSION.access_token },
+      body: JSON.stringify({ image: photo.base64, mediaType: photo.mediaType }),
+      signal: ctl ? ctl.signal : undefined
+    });
+  } catch(e){
+    throw new Error((e && e.name==="AbortError") ? "That took too long — try again" : "Couldn't reach the reader");
+  } finally { if (tm) clearTimeout(tm); }
+  let data = null;
+  try { data = await res.json(); } catch(e){}
+  if (!res.ok){
+    if (res.status === 404) throw new Error("The parse-workout function isn't deployed yet — see SETUP.md");
+    throw new Error((data && data.error) || ("Couldn't read it (HTTP "+res.status+")"));
+  }
+  if (!data || !data.workout) throw new Error((data && data.error) || "Nothing came back");
+  return data.workout;
+}
+/* Coerce everything; never trust the numbers straight off the model. */
+function normaliseRun(raw){
+  const r = {};
+  r.activity = String(raw.activity || "Outdoor Run").slice(0,40);
+  r.title = String(raw.title || "").slice(0,60);
+  r.dateText = String(raw.date || "").slice(0,40);
+  r.date = parseScreenshotDate(r.dateText, raw.year) || todayISO();
+  r.startTime = String(raw.startTime || "").slice(0,5);
+  r.endTime = String(raw.endTime || "").slice(0,5);
+  r.location = String(raw.location || "").slice(0,60);
+  ["durationSec","distanceKm","activeKcal","totalKcal","avgPaceSecPerKm","avgHeartRate",
+   "maxHeartRate","avgPowerW","avgCadenceSpm","elevationM","effortScore"].forEach(k => {
+    const v = num(raw[k]);
+    r[k] = (isFinite(v) && v > 0) ? v : null;
+  });
+  r.effort = String(raw.effort || "").slice(0,20);
+  const c = String(raw.confidence||"").toLowerCase();
+  r.confidence = (c==="high"||c==="medium"||c==="low") ? c : "medium";
+  r.unreadable = Array.isArray(raw.unreadable) ? raw.unreadable.slice(0,6).map(x=>String(x).slice(0,40)) : [];
+  return r;
+}
+
+/* ---- review before saving ---- */
+const RUN_FIELDS = [
+  { key:"distanceKm",       lab:"Distance",   unit:"km",  step:"0.01" },
+  { key:"activeKcal",       lab:"Active",     unit:"kcal",step:"1" },
+  { key:"totalKcal",        lab:"Total",      unit:"kcal",step:"1" },
+  { key:"avgHeartRate",     lab:"Avg HR",     unit:"bpm", step:"1" },
+  { key:"maxHeartRate",     lab:"Max HR",     unit:"bpm", step:"1" },
+  { key:"avgPowerW",        lab:"Avg power",  unit:"W",   step:"1" },
+  { key:"avgCadenceSpm",    lab:"Cadence",    unit:"spm", step:"1" },
+  { key:"elevationM",       lab:"Elevation",  unit:"m",   step:"1" }
+];
+function openRunReview(){
+  const r = RUN_IMPORT;
+  const existing = runsForDate(r.date);
+  const pill = r.confidence==="high" ? "good" : r.confidence==="low" ? "bad" : "warn";
+  openSheet(`
+    <div class="row spread" style="align-items:flex-start;">
+      <h3 style="margin:0;">Check the numbers</h3>
+      <span class="pill ${pill}">${esc(r.confidence)} confidence</span>
+    </div>
+    <p class="hint" style="margin:8px 0 12px;">Nothing's saved yet. Fix anything misread, then log it.</p>
+
+    <div class="grid2">
+      <label class="field"><span>Activity</span><input class="input" id="rn_activity" type="text" value="${esc(r.activity)}"></label>
+      <label class="field"><span>Date</span><input class="input" id="rn_date" type="date" value="${esc(r.date)}" max="${todayISO()}"></label>
+    </div>
+    ${r.dateText?`<p class="hint" style="margin:-6px 0 10px;">Screenshot said “${esc(r.dateText)}” — year worked out from that.</p>`:""}
+
+    <div class="grid2">
+      <label class="field"><span>Duration (h:mm:ss)</span><input class="input" id="rn_dur" type="text" value="${r.durationSec?hms(r.durationSec):""}" placeholder="0:00"></label>
+      <label class="field"><span>Pace (per km)</span><input class="input" id="rn_pace" type="text" value="${r.avgPaceSecPerKm?paceText(r.avgPaceSecPerKm).replace('/km',''):""}" placeholder="5'30&quot;"></label>
+    </div>
+
+    <div class="serv-grid">
+      ${RUN_FIELDS.map(f=>`<label class="field"><span>${f.lab} (${f.unit})</span>
+        <input class="input" id="rn_${f.key}" type="number" step="${f.step}" inputmode="decimal" value="${r[f.key]!=null?numVal(r[f.key], f.key==="distanceKm"?2:0):""}"></label>`).join("")}
+    </div>
+
+    <div class="grid2">
+      <label class="field"><span>Started</span><input class="input" id="rn_start" type="text" value="${esc(r.startTime)}" placeholder="06:02"></label>
+      <label class="field"><span>Location</span><input class="input" id="rn_loc" type="text" value="${esc(r.location)}"></label>
+    </div>
+
+    ${r.unreadable.length?`<div class="warnbox">Couldn't read clearly: ${esc(r.unreadable.join(", "))}. Worth double-checking.</div>`:""}
+
+    ${r.activeKcal?`<div class="tt-row"><span class="tt-lab">Add ${fmt(r.activeKcal,0)} kcal to that day's energy burnt</span>
+      <button class="toggle ${RUN_ADD_BURN?"on":""}" onclick="RUN_ADD_BURN=!RUN_ADD_BURN;openRunReview()"><span class="knob"></span></button></div>
+      <p class="hint" style="margin:6px 0 12px;">${RUN_ADD_BURN
+        ? "It'll be added to whatever's already logged for that day."
+        : "Leave off if you type your Apple Watch daily total in by hand — that already includes this run."}</p>`:""}
+
+    ${existing.length?`<div class="card" style="background:var(--card-2);">
+      <div class="eyebrow" style="margin-bottom:6px;">Already logged that day</div>
+      ${existing.map(x=>`<div class="kv"><span class="k">${esc(x.activity)} · ${fmt(x.distanceKm,2)} km · ${hms(x.durationSec)}</span></div>`).join("")}
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="btn sm primary" onclick="saveRunImport('add')">Add as another run</button>
+        <button class="btn sm ghost" onclick="saveRunImport('replace')">Replace it</button>
+      </div>
+    </div>
+    <button class="btn ghost full" style="margin-top:10px;" onclick="closeSheet()">Cancel</button>`
+    :`<button class="btn primary full" onclick="saveRunImport('add')">Log this run</button>
+      <button class="btn ghost full" style="margin-top:8px;" onclick="openRunImportSheet()">Use a different screenshot</button>
+      <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Cancel</button>`}
+  `);
+}
+let RUN_ADD_BURN = false;
+/* "h:mm:ss", "mm:ss" or plain seconds -> seconds */
+function parseDurationText(str){
+  const t = String(str||"").trim();
+  if (!t) return 0;
+  const parts = t.split(":").map(x=>num(x));
+  if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2];
+  if (parts.length === 2) return parts[0]*60 + parts[1];
+  return num(t);
+}
+/* 7'52" or 7:52 -> seconds per km */
+function parsePaceText(str){
+  const t = String(str||"").trim();
+  if (!t) return 0;
+  const m = t.match(/(\d+)\s*['’:]\s*(\d+)/);
+  if (m) return num(m[1])*60 + num(m[2]);
+  return num(t);
+}
+function saveRunImport(mode){
+  const r = RUN_IMPORT; if (!r) return;
+  const date = ($("#rn_date") && $("#rn_date").value) || r.date;
+  const run = {
+    id: uid("run"), date, source:"screenshot",
+    activity: (($("#rn_activity")&&$("#rn_activity").value) || r.activity || "Outdoor Run").trim(),
+    title: r.title,
+    durationSec: parseDurationText($("#rn_dur") && $("#rn_dur").value) || null,
+    avgPaceSecPerKm: parsePaceText($("#rn_pace") && $("#rn_pace").value) || null,
+    startTime: (($("#rn_start")&&$("#rn_start").value)||"").trim(),
+    endTime: r.endTime,
+    location: (($("#rn_loc")&&$("#rn_loc").value)||"").trim(),
+    effort: r.effort, effortScore: r.effortScore,
+    createdAt: Date.now(), updatedAt: Date.now()
+  };
+  RUN_FIELDS.forEach(f => {
+    const el = $("#rn_"+f.key);
+    const v = el && el.value!=="" ? num(el.value) : null;
+    run[f.key] = (v!=null && isFinite(v) && v>0) ? v : null;
+  });
+  if (!run.avgPaceSecPerKm) run.avgPaceSecPerKm = derivedPace(run) || null;
+
+  if (mode === "replace") STATE.runLogs = STATE.runLogs.filter(x => x.date !== date);
+  STATE.runLogs.push(run);
+
+  if (RUN_ADD_BURN && num(run.activeKcal) > 0){
+    setBurned(date, getBurned(date) + num(run.activeKcal));
+  }
+  RUN_IMPORT = null; RUN_PHOTO = null; RUN_ADD_BURN = false;
+  save(); closeSheet();
+  toast(mode==="replace" ? "Run replaced" : "Run logged");
+  navigate("workouts");
+}
+
+/* ---- display ---- */
+function runLine(r){
+  const bits = [];
+  if (r.distanceKm) bits.push(`${fmt(r.distanceKm,2)} km`);
+  if (r.durationSec) bits.push(hms(r.durationSec));
+  const p = derivedPace(r);
+  if (p) bits.push(paceText(p));
+  if (r.avgHeartRate) bits.push(`${fmt(r.avgHeartRate,0)} bpm`);
+  return bits.join(" · ");
+}
+function openRunDetail(id){
+  const r = (STATE.runLogs||[]).find(x=>x.id===id);
+  if (!r) return;
+  const rows = [
+    ["Distance", r.distanceKm ? fmt(r.distanceKm,2)+" km" : null],
+    ["Time", r.durationSec ? hms(r.durationSec) : null],
+    ["Avg pace", derivedPace(r) ? paceText(derivedPace(r)) : null],
+    ["Active energy", r.activeKcal ? fmt(r.activeKcal,0)+" kcal" : null],
+    ["Total energy", r.totalKcal ? fmt(r.totalKcal,0)+" kcal" : null],
+    ["Avg heart rate", r.avgHeartRate ? fmt(r.avgHeartRate,0)+" bpm" : null],
+    ["Max heart rate", r.maxHeartRate ? fmt(r.maxHeartRate,0)+" bpm" : null],
+    ["Avg power", r.avgPowerW ? fmt(r.avgPowerW,0)+" W" : null],
+    ["Cadence", r.avgCadenceSpm ? fmt(r.avgCadenceSpm,0)+" spm" : null],
+    ["Elevation", r.elevationM ? fmt(r.elevationM,0)+" m" : null],
+    ["Effort", r.effort ? (r.effort + (r.effortScore?` (${fmt(r.effortScore,0)})`:"")) : null],
+    ["Started", r.startTime || null],
+    ["Where", r.location || null]
+  ].filter(x=>x[1]);
+  openSheet(`
+    <h3>${esc(r.activity)}</h3>
+    <p class="hint" style="margin:-4px 0 12px;">${prettyDate(r.date)}${r.title?` · ${esc(r.title)}`:""}</p>
+    ${rows.map(([k,v])=>`<div class="kv"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join("")}
+    <button class="btn ghost full bad" style="margin-top:14px;" onclick="deleteRun('${r.id}')">Delete this run</button>
+    <button class="btn ghost full" style="margin-top:8px;" onclick="closeSheet()">Close</button>
+  `);
+}
+function runsCard(){
+  const runs = allRuns().slice(0,8);
+  if (!runs.length) return "";
+  return `<div class="card flush">
+    <div style="padding:14px 16px 6px"><h3 style="margin:0">Runs</h3></div>
+    ${runs.map(r=>`<div class="list-item" style="cursor:pointer;" onclick="openRunDetail('${r.id}')">
+      <div class="li-ic">🏃</div>
+      <div class="li-main"><div class="li-title">${esc(r.activity)}</div>
+        <div class="li-sub">${prettyDate(r.date)} · ${esc(runLine(r))}</div></div>
+    </div>`).join("")}
   </div>`;
 }
 
