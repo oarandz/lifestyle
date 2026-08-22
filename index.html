@@ -549,7 +549,7 @@ textarea.input{ min-height:64px; resize:vertical; }
 </div>
 
 <script>
-const APP_BUILD = "2026-08-25a";   // shown in Settings, so you can tell which build is live
+const APP_BUILD = "2026-08-25b";   // shown in Settings, so you can tell which build is live
 
 /* =====================================================================
    DAILY — single-file health tracker (index.html + Supabase)
@@ -4380,6 +4380,7 @@ async function requestEstimate(description, photo){
   try { data = await res.json(); } catch(e){}
   if (!res.ok){
     if (res.status === 404) throw new Error("The estimate-food function isn't deployed yet — see SETUP.md");
+    if (res.status === 546 || res.status === 504) throw new Error("The function timed out — try a smaller photo");
     throw new Error((data && data.error) || ("Estimate failed (HTTP "+res.status+")"));
   }
   if (!data || !data.estimate) throw new Error((data && data.error) || "No estimate came back");
